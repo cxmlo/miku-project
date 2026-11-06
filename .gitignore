@@ -3,6 +3,8 @@ build/
 dist/
 coverage/
 **/target/
+.antigravity/
+.aistudio/
 .DS_Store
 *.log
 .env*
