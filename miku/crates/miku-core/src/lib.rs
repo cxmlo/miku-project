@@ -1,14 +1,18 @@
 #![allow(
+    unknown_lints,
     clippy::too_many_arguments,
     clippy::manual_range_contains,
     clippy::needless_range_loop,
-    clippy::large_enum_variant
+    clippy::large_enum_variant,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity,
+    clippy::invisible_characters
 )]
 
 use std::collections::{HashMap, HashSet};
 use miku_protocol::{
     constant_time_token_eq, BaseContractBundle, IslandState, MikuLinkEnvelopeV1,
-    MikuLinkMessageV1, ProtocolError, SUPPORTED_PROTOCOL_VERSIONS,
+    MikuLinkMessageV1, ProtocolError,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch};

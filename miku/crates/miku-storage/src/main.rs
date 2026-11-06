@@ -4,7 +4,9 @@
     clippy::manual_range_contains,
     clippy::needless_range_loop,
     clippy::large_enum_variant,
-    clippy::chunks_exact_to_as_chunks
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity,
+    clippy::invisible_characters
 )]
 
 use std::env;

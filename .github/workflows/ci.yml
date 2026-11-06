@@ -1,0 +1,55 @@
+name: Miku CI - Windows TDD, Clippy, Security & MIT License Governance (F-30)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  windows-verify:
+    name: Windows 11 Matrix (Tests, Clippy -D warnings, Audit & MIT License)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [windows-latest]
+        toolchain: [stable]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain with clippy and rustfmt
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy, rustfmt
+
+      - name: Cache Cargo registry and target directory
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "miku -> target"
+
+      - name: Verify 100% MIT License & Dependency Graph Zero-Copyleft Policy (F-30)
+        run: cargo run --release --manifest-path miku/Cargo.toml -p miku-cli --bin miku-license-audit
+
+      - name: Run cargo clippy across all workspace targets with zero warnings
+        run: cargo clippy --manifest-path miku/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run full workspace TDD test suite (all 9 crates)
+        run: cargo test --manifest-path miku/Cargo.toml --workspace
+
+      - name: Run miku doctor v0 diagnostic suite
+        run: cargo run --release --manifest-path miku/Cargo.toml -p miku-cli -- doctor --json
+
+      - name: Install and run cargo-audit & cargo-deny license checks
+        run: |
+          cargo install --locked cargo-audit cargo-deny
+          cargo audit --file miku/Cargo.lock
+          cargo deny --manifest-path miku/Cargo.toml check licenses

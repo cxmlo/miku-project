@@ -9,6 +9,8 @@ members = [
     "crates/miku-storage",
     "crates/miku-memory",
     "crates/miku-platform",
+    "crates/miku-cli",
+    "crates/miku-ui",
 ]
 
 [workspace.package]

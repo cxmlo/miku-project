@@ -1,0 +1,336 @@
+# miku/assets/rig.toml — Rig procedural de Miku (Dynamic Island nativa, sin WebView)
+# Generado desde miku_v7.html. Espacio de coordenadas: viewBox 128×128, +x derecha, +y abajo, 1 unidad = 1 px @ k=1.
+# Todos los SVG de assets/avatar comparten ese espacio: se apilan SIN transformar y sólo se mueven por los parámetros de abajo.
+
+[meta]
+version  = 1
+source   = "miku_v7.html"
+viewbox  = [128, 128]
+body_size = [98.0, 87.0]            # ancho × alto de la silueta a k = 1
+
+# ───────────────────────── Anclajes ─────────────────────────
+[anchors]
+root         = [64, 109]      # centro de la base: origen de squash/tilt/bob (translate 80,128 en el canvas original)
+head_top     = [64, 22]      # cima de la cabeza: monta gorros, coronas, aureola…
+eyes_center  = [64, 73.79]    # punto medio entre ojos (monta gafas)
+mouth_center = [64, 82.34]    # centro de la boca (reposo)
+left_ear     = [14.0, 81.0]         # centro de la orejita izquierda (pivote de rotación)
+right_ear    = [114.0, 81.0]        # centro de la orejita derecha
+neck         = [64, 99.77]     # extra: línea de la bufanda (slot neck)
+
+[anchors.eyes]                      # centros individuales de los ojos
+left  = [43.72, 73.79]
+right = [84.28, 73.79]
+
+# ───────────────────────── Física ─────────────────────────
+[physics]
+sleep_epsilon = 0.001      # si |x−objetivo| y |v| < epsilon en TODOS los resortes y no hay animación activa → 0 FPS (render suspendido)
+idle_fps      = 0
+active_fps    = 60
+max_dt        = 0.04       # clamp de dt del código original
+
+# Integrador del código original: a = (−k·(x−objetivo) − c·v) / m ; v += a·dt ; x += v·dt   (semi-implícito de Euler)
+[physics.springs.squash]   # aplastamiento / rebote al saltar o aterrizar (P.sq)
+stiffness = 190.0
+damping   = 9.0
+mass      = 1.0
+
+[physics.springs.jump]     # salto vertical del cuerpo (P.jy)
+stiffness = 60.0
+damping   = 7.0
+mass      = 1.0
+
+[physics.springs.tail]     # coletas (opcional) y balanceo de colgantes
+stiffness = 70.0
+damping   = 7.5
+mass      = 1.0
+
+[physics.springs.ui_default]   # mkSp(): resorte genérico de UI
+stiffness = 300.0
+damping   = 30.0
+mass      = 1.0
+
+[physics.springs.chase]    # Miku persiguiendo el archivo arrastrado a la isla
+stiffness = 92.0
+damping   = 10.5
+mass      = 1.0
+
+[physics.springs.accessory_follow]   # PROPUESTO (v7 no tiene inercia de accesorios): ζ ≈ 0.42, misma familia que squash/jump/tail
+stiffness = 90.0
+damping   = 8.0
+mass      = 1.0
+
+[physics.smoothing]        # suavizado exponencial  x += (objetivo − x) · (1 − e^(−rate·dt))
+look_and_glow = 9.0
+mouth         = 16.0
+island_follow = 10.0
+lean          = 9.0
+lean_chase    = 13.0
+
+[physics.idle]
+breath_amplitude = 0.014   # escala Y: 1 + A·sin(ω·t)
+breath_omega     = 2.2
+breath_omega_sleeping = 1.1
+blink_interval   = [2.5, 6.0]
+blink_duration   = 0.14
+blink_closed_scale_y = 0.08
+
+[look]                     # los rasgos faciales se desplazan con la mirada (proyección esférica del código)
+max_yaw_rad     = 0.5
+max_pitch_rad   = 0.4
+max_shift_x_px  = 23.49
+max_shift_y_px  = 15.58
+
+# ───────────────────────── Capas (de atrás hacia delante) ─────────────────────────
+[[layers]]
+id = "accessory_back"
+z = 10
+svg = "dynamic"            # {accessory}_back.svg o, si el accesorio es back_only (bunny), {accessory}.svg
+follow_spring = true
+note = "Piezas que van DETRÁS del cuerpo: corona (parte trasera), ala trasera de la bruja, orejas de conejo."
+
+[[layers]]
+id = "ears"
+z = 20
+svg = "avatar/ears.svg"
+pivots = ["left_ear", "right_ear"]
+rest_angle_rad = 0.5       # ±0.5 rad (izq −, der +); el estado de ánimo lo cambia
+angle_range_rad = [0.15, 1.1]
+offset_y_range = [-20.0, 6.0]
+default_visible = true
+note = "En el código son hand() (brazos); visualmente son las orejitas laterales."
+
+[[layers]]
+id = "body"
+z = 30
+svg = "avatar/body.svg"
+pivot = "root"
+squash_spring = "squash"
+jump_spring = "jump"
+breathing = true
+
+[[layers]]
+id = "blush"
+z = 40
+svg = "procedural"
+shape = "ellipse"
+rx = 6.5
+ry = 3.8
+color = "#FF9DB8"
+alpha = 0.5
+at_yaw_pitch_rad = [0.8, -0.42]     # ±yaw
+visible_states = ["happy", "love", "annoyed"]
+
+[[layers]]
+id = "eyes"
+z = 50
+svg = "avatar/expressions/eyes_open.svg"
+blink_svg = "avatar/expressions/eyes_blink.svg"
+anchor = "eyes_center"
+parallax = "look"
+
+[[layers]]
+id = "brows"
+z = 55
+svg = "procedural"
+stroke = 3.2
+color = "#172B40"
+visible_states = ["working", "annoyed", "error"]
+
+[[layers]]
+id = "mouth"
+z = 60
+svg = "avatar/expressions/mouth_idle.svg"
+talk_svg = "avatar/expressions/mouth_talk.svg"
+talk_ry_range = [0.8, 4.8]          # animar ry de «mouth_talk.svg» con |sin(14·t)|
+anchor = "mouth_center"
+parallax = "look"
+
+[[layers]]
+id = "accessory_front"
+z = 70
+svg = "dynamic"
+follow_spring = true
+
+[[layers]]
+id = "fx"
+z = 100
+svg = "procedural"
+note = "Efectos de estado (nubes, engranes, corazones, zzz…): dibujados por el motor; no son assets."
+
+# ───────────────────────── Expresiones ─────────────────────────
+[expressions.eyes]
+open  = "avatar/expressions/eyes_open.svg"
+blink = "avatar/expressions/eyes_blink.svg"
+procedural_variants = ["arc", "line", "x", "<", "ang", "spiral", "wink"]   # ver design-tokens.json → avatar.glow.per_state
+
+[expressions.mouth]
+idle = "avatar/expressions/mouth_idle.svg"
+talk = "avatar/expressions/mouth_talk.svg"
+procedural_variants = ["O", "smile", "frown", "grr", "slot"]
+
+# ───────────────────────── Accesorios ─────────────────────────
+[accessories]
+anchor_space = "viewBox 128×128 del avatar"
+note = "Cada SVG viene pre-registrado: si se dibuja con su esquina sup-izq en (0, −shift_y) del marco del avatar encaja sin ajustes. pivot = punto del SVG que coincide con el anchor del slot."
+
+[accessories.slots.head]
+anchor        = "head_top"
+offset_y      = 0.0
+follow_spring = true
+spring        = "accessory_follow"
+
+[accessories.slots.face]
+anchor        = "eyes_center"
+offset_y      = 0.0
+follow_spring = false          # las gafas viajan rígidas con los ojos (parallax de la mirada)
+parallax      = "look"
+
+[accessories.slots.neck]
+anchor        = "neck"
+offset_y      = 0.0
+follow_spring = true
+spring        = "accessory_follow"
+
+[accessories.items.beanie]
+label     = "Gorro"
+slot      = "head"
+svg       = "avatar/accessories/beanie.svg"
+layer     = "front"
+pivot     = [64, 42]
+shift_y   = 20
+origin_in_avatar = [0, -20]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [106.5, 87.5]
+
+[accessories.items.crown]
+label     = "Corona"
+slot      = "head"
+svg       = "avatar/accessories/crown.svg"
+svg_back  = "avatar/accessories/crown_back.svg"
+layer     = "front+back"
+pivot     = [64, 22]
+shift_y   = 0
+origin_in_avatar = [0, 0]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [99, 52]
+
+[accessories.items.party]
+label     = "Fiesta"
+slot      = "head"
+svg       = "avatar/accessories/party.svg"
+layer     = "front"
+pivot     = [64, 64]
+shift_y   = 42
+origin_in_avatar = [0, -42]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [56, 76.5]
+
+[accessories.items.santa]
+label     = "Santa"
+slot      = "head"
+svg       = "avatar/accessories/santa.svg"
+layer     = "front"
+pivot     = [64, 34]
+shift_y   = 12
+origin_in_avatar = [0, -12]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [110, 73.5]
+
+[accessories.items.witch]
+label     = "Bruja"
+slot      = "head"
+svg       = "avatar/accessories/witch.svg"
+svg_back  = "avatar/accessories/witch_back.svg"
+layer     = "front+back"
+pivot     = [64, 26]
+shift_y   = 4
+baked_scale = 0.9
+origin_in_avatar = [0, -4]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [139, 63]
+
+[accessories.items.pumpkin]
+label     = "Calabaza"
+slot      = "head"
+svg       = "avatar/accessories/pumpkin.svg"
+layer     = "front"
+pivot     = [64, 54]
+shift_y   = 32
+origin_in_avatar = [0, -32]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [71, 60]
+
+[accessories.items.bunny]
+label     = "Orejas de conejo"
+slot      = "head"
+svg       = "avatar/accessories/bunny.svg"
+layer     = "back"
+pivot     = [64, 36]
+shift_y   = 14
+origin_in_avatar = [0, -14]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [62, 45]
+
+[accessories.items.halo]
+label     = "Aureola"
+slot      = "head"
+svg       = "avatar/accessories/halo.svg"
+layer     = "front"
+pivot     = [64, 51]
+shift_y   = 29
+origin_in_avatar = [0, -29]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [75, 33.5]
+
+[accessories.items.propeller]
+label     = "Gorra de hélice"
+slot      = "head"
+svg       = "avatar/accessories/propeller.svg"
+layer     = "front"
+pivot     = [64, 22]
+shift_y   = 0
+origin_in_avatar = [0, 0]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [99, 54]
+
+[accessories.items.phones]
+label     = "Audífonos"
+slot      = "head"
+svg       = "avatar/accessories/phones.svg"
+layer     = "front"
+pivot     = [64, 22]
+shift_y   = 0
+origin_in_avatar = [0, 0]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [125, 56.5]
+
+[accessories.items.bow]
+label     = "Moño"
+slot      = "head"
+svg       = "avatar/accessories/bow.svg"
+layer     = "front"
+pivot     = [64, 22]
+shift_y   = 0
+origin_in_avatar = [0, 0]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [27, 20]
+
+[accessories.items.shades]
+label     = "Gafas de sol"
+slot      = "face"
+svg       = "avatar/accessories/shades.svg"
+layer     = "front"
+pivot     = [64, 73.79]
+shift_y   = 0
+origin_in_avatar = [0, 0]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [65, 18.5]
+
+[accessories.items.round]
+label     = "Gafas"
+slot      = "face"
+svg       = "avatar/accessories/round.svg"
+layer     = "front"
+pivot     = [64, 73.79]
+shift_y   = 0
+origin_in_avatar = [0, 0]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [65, 26.5]
+
+[accessories.items.scarf]
+label     = "Bufanda"
+slot      = "neck"
+svg       = "avatar/accessories/scarf.svg"
+layer     = "front"
+pivot     = [64, 99.77]
+shift_y   = 0
+origin_in_avatar = [0, 0]   # esquina sup-izq del SVG en el marco 128×128 del avatar
+size      = [100, 41]

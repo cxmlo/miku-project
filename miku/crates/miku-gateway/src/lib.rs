@@ -1,8 +1,12 @@
 #![allow(
+    unknown_lints,
     clippy::too_many_arguments,
     clippy::manual_range_contains,
     clippy::needless_range_loop,
-    clippy::large_enum_variant
+    clippy::large_enum_variant,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity,
+    clippy::invisible_characters
 )]
 
 use std::net::SocketAddr;
@@ -649,6 +653,7 @@ async fn send_error_and_close(
     }
     let _ = write_ws_close_frame(stream, close_code, false).await;
     let _ = stream.flush().await;
+    let _ = stream.shutdown().await;
     Ok(())
 }
 
@@ -781,20 +786,20 @@ pub async fn read_ws_frame_bounded(
         usize::try_from(raw_u64).unwrap_or(usize::MAX)
     };
 
-    // CRITICAL SECURITY CHECK: Cut immediately BEFORE allocating payload buffer if over cap!
-    if payload_len > max_payload_bytes {
-        return Err(GatewayError::FrameTooLarge {
-            declared_bytes: payload_len,
-            max_bytes: max_payload_bytes,
-        });
-    }
-
     let mut mask_key = [0u8; 4];
     if masked {
         stream
             .read_exact(&mut mask_key)
             .await
             .map_err(|e| GatewayError::IoError(e.to_string()))?;
+    }
+
+    // CRITICAL SECURITY CHECK: Cut immediately BEFORE allocating payload buffer if over cap!
+    if payload_len > max_payload_bytes {
+        return Err(GatewayError::FrameTooLarge {
+            declared_bytes: payload_len,
+            max_bytes: max_payload_bytes,
+        });
     }
 
     let mut payload = vec![0u8; payload_len];

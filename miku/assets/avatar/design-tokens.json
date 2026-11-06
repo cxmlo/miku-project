@@ -1,0 +1,818 @@
+{
+  "$meta": {
+    "name": "miku-design-tokens",
+    "version": "1.0.0",
+    "source": [
+      "miku_v7.html (motor del muñeco, escenas, CSS de la isla)",
+      "Miku · Catálogo de diseño.html (fundamentos, resorte, reglas de movimiento)"
+    ],
+    "units": "px salvo indicación; avatar en viewBox 128×128"
+  },
+  "avatar": {
+    "viewBox": [
+      128,
+      128
+    ],
+    "origin_root": [
+      64,
+      109
+    ],
+    "head_top": [
+      64,
+      22
+    ],
+    "palette": {
+      "body": "#FFFFFF",
+      "ink": "#172B40",
+      "tongue": "#FF9DB8",
+      "blush": {
+        "color": "#FF9DB8",
+        "alpha": 0.5,
+        "rx": 6.5,
+        "ry": 3.8,
+        "color_angry": "#FF5A4D"
+      },
+      "ear_fill": "#FFFFFF",
+      "ear_inner_bunny": "#FFB3C8",
+      "body_shine": "rgba(255,255,255,.34)",
+      "sheen_diagonal_hat": "rgba(255,255,255,.14)",
+      "ear_gradient_note": "Las orejitas (hand()) son blanco plano; el degradado visible es el glow (feGaussianBlur) del cuerpo.",
+      "tails_teal_gradient": {
+        "from": "#62E8DE",
+        "to": "#25B1AB",
+        "detail_dark": "#24344F",
+        "detail_pink": "#FF8FB1",
+        "note": "tails() existe en v7 pero nunca se invoca; no exportado."
+      }
+    },
+    "glow": {
+      "idle": {
+        "hex": "#BDDEFF",
+        "alpha": 0.6,
+        "rgba": "rgba(189,222,255,.6)",
+        "canvas_shadowBlur": 22,
+        "svg_stdDeviation": 5.5,
+        "passes_body": 2,
+        "passes_ears": 1
+      },
+      "formula": "rgb = floor((accent + 510) / 3) por canal; alpha = min(1, 0.6 × glow_gain); sigma = shadowBlur / 4 (DPR 2)",
+      "per_state": {
+        "idle": {
+          "eyes": "o",
+          "mouth": "dot",
+          "fx": null,
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "listening": {
+          "eyes": "o",
+          "mouth": "O",
+          "fx": "listen",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.9
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1.5,
+          "glow_hex": "#BDDEFF"
+        },
+        "thinking": {
+          "eyes": "o",
+          "mouth": "dot",
+          "fx": "think",
+          "glow_rgba": [
+            226,
+            216,
+            255,
+            0.78
+          ],
+          "accent_rgb": [
+            170,
+            140,
+            255
+          ],
+          "glow_gain": 1.3,
+          "glow_hex": "#E2D8FF"
+        },
+        "talking": {
+          "eyes": "o",
+          "mouth": "talk",
+          "fx": "talk",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "searching": {
+          "eyes": "o",
+          "mouth": "dot",
+          "fx": "search",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "working": {
+          "eyes": "o",
+          "mouth": "frown",
+          "fx": "work",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "happy": {
+          "eyes": "arc",
+          "mouth": "smile",
+          "fx": "happy",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "proud": {
+          "eyes": "o",
+          "mouth": "smile",
+          "fx": "proud",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.84
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1.4,
+          "glow_hex": "#BDDEFF"
+        },
+        "wink": {
+          "eyes": "wink",
+          "mouth": "smile",
+          "fx": "happy",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "love": {
+          "eyes": "o",
+          "mouth": "smile",
+          "fx": "love",
+          "glow_rgba": [
+            255,
+            222,
+            231,
+            0.78
+          ],
+          "accent_rgb": [
+            255,
+            157,
+            184
+          ],
+          "glow_gain": 1.3,
+          "glow_hex": "#FFDEE7"
+        },
+        "surprised": {
+          "eyes": "o",
+          "mouth": "O",
+          "fx": "surp",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "question": {
+          "eyes": "o",
+          "mouth": "dot",
+          "fx": "q",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "annoyed": {
+          "eyes": "ang",
+          "mouth": "grr",
+          "fx": "ann",
+          "glow_rgba": [
+            255,
+            201,
+            198,
+            0.84
+          ],
+          "accent_rgb": [
+            255,
+            95,
+            85
+          ],
+          "glow_gain": 1.4,
+          "glow_hex": "#FFC9C6"
+        },
+        "sleeping": {
+          "eyes": "line",
+          "mouth": "none",
+          "fx": "zzz",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.3
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 0.5,
+          "glow_hex": "#BDDEFF"
+        },
+        "error": {
+          "eyes": "x",
+          "mouth": "frown",
+          "fx": "err",
+          "glow_rgba": [
+            255,
+            210,
+            207,
+            0.6
+          ],
+          "accent_rgb": [
+            255,
+            122,
+            112
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#FFD2CF"
+        },
+        "dizzy": {
+          "eyes": "spiral",
+          "mouth": "frown",
+          "fx": "diz",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "look": {
+          "eyes": "o",
+          "mouth": "dot",
+          "fx": null,
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "squash": {
+          "eyes": "arc",
+          "mouth": "dot",
+          "fx": null,
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        },
+        "swallow": {
+          "eyes": "o",
+          "mouth": "slot",
+          "fx": "mail",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.84
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1.4,
+          "glow_hex": "#BDDEFF"
+        },
+        "wave": {
+          "eyes": "o",
+          "mouth": "smile",
+          "fx": "wave",
+          "glow_rgba": [
+            189,
+            222,
+            255,
+            0.6
+          ],
+          "accent_rgb": [
+            59,
+            158,
+            255
+          ],
+          "glow_gain": 1,
+          "glow_hex": "#BDDEFF"
+        }
+      }
+    },
+    "geometry": {
+      "body": {
+        "half_width": 49,
+        "height_top": 47,
+        "height_bottom": 40,
+        "exponent_top": 1.18,
+        "exponent_bottom": 0.6,
+        "size_px_at_k1": [
+          98,
+          87
+        ]
+      },
+      "ears": {
+        "rx": 6.5,
+        "ry": 12,
+        "offset_from_center": [
+          50,
+          -28
+        ],
+        "rest_angle_rad": 0.5
+      },
+      "eye": {
+        "rx": 5.2,
+        "ry": 7.8,
+        "stroke": 3.2,
+        "centers_yaw_pitch_rad": [
+          0.43,
+          -0.12
+        ],
+        "blink_min_scale": 0.08
+      },
+      "mouth": {
+        "stroke": 2.6,
+        "dot_half_width": 3,
+        "talk_rx": 4.5,
+        "talk_ry_range": [
+          0.8,
+          4.8
+        ],
+        "talk_rate_rad_s": 14,
+        "center_yaw_pitch_rad": [
+          0,
+          -0.34
+        ]
+      },
+      "brow": {
+        "stroke": 3.2
+      },
+      "face_parallax": {
+        "max_yaw_rad": 0.5,
+        "max_pitch_rad": 0.4,
+        "max_shift_x_px": 23.49,
+        "max_shift_y_px": 15.58
+      }
+    },
+    "accessory_palettes": {
+      "beanie": [
+        "#8CC0FF",
+        "#2152C4",
+        "#FFFFFF",
+        "#5B93F2",
+        "#1F4FBF",
+        "#FFF3B0",
+        "#FFC21A",
+        "#C9D6F0",
+        "#F4F7FF",
+        "#FFD84D",
+        "#0A1E78",
+        "#081C6E",
+        "#000032",
+        "#DBE6FF"
+      ],
+      "crown": [
+        "#FFE58A",
+        "#DD9A0C",
+        "#22C55E",
+        "#A855F7",
+        "#EF4444",
+        "#3B82F6",
+        "#A9730D"
+      ],
+      "party": [
+        "#FF9BD0",
+        "#C8228A",
+        "#FFF6C0",
+        "#FFC21A",
+        "#FFD84D",
+        "#FFE066",
+        "#5CE1E6",
+        "#FFFFFF",
+        "#FFF3B0",
+        "#FF6BD6"
+      ],
+      "santa": [
+        "#FF5A5A",
+        "#A31515",
+        "#FFFFFF",
+        "#DBE3F0",
+        "#D3DBEA",
+        "#000000",
+        "#E6ECF6",
+        "#EEF2FA"
+      ],
+      "witch": [
+        "#6D28D9",
+        "#2E1065",
+        "#9A6CFB",
+        "#2A0F5E",
+        "#FFA24A",
+        "#C2410C",
+        "#FFE58A",
+        "#D99A0B",
+        "#C8AAFF",
+        "#FFFFFF",
+        "#FFE27A",
+        "#7C2D12",
+        "#1E0838"
+      ],
+      "pumpkin": [
+        "#FFA63A",
+        "#E0540A",
+        "#FFB300",
+        "#7CCF45",
+        "#3F8F1D",
+        "#6E2300",
+        "#FFFFFF",
+        "#FFDA46",
+        "#3F7D20",
+        "#6BB53A",
+        "#5AA62C"
+      ],
+      "bunny": [
+        "#FFFFFF",
+        "#000000",
+        "#FFB3C8"
+      ],
+      "halo": [
+        "#FFE58A",
+        "#F5A40C",
+        "#FFD84D",
+        "#FFFFFF"
+      ],
+      "propeller": [
+        "#59ABFF",
+        "#1A49AD",
+        "#FFFFFF",
+        "#2C64D8",
+        "#12378A",
+        "#FFD84D",
+        "#FF5C66",
+        "#D9DDE6"
+      ],
+      "phones": [
+        "#3A4152",
+        "#171A23",
+        "#262B38",
+        "#FFFFFF"
+      ],
+      "bow": [
+        "#FF9BD0",
+        "#E0307F",
+        "#FFC0DE",
+        "#C2185B"
+      ],
+      "shades": [
+        "#0F1116",
+        "#FFFFFF"
+      ],
+      "round": [
+        "#D9A25F",
+        "#BEE1FF",
+        "#FFFFFF"
+      ],
+      "scarf": [
+        "#F87171",
+        "#B91C1C",
+        "#EF4444",
+        "#FFFFFF"
+      ]
+    }
+  },
+  "scale": {
+    "note": "body_px = 98 × k (ancho de la silueta). El canvas se escala con k según la escena (place() en miku_v7).",
+    "idle": {
+      "k": 0.34,
+      "body_px": 33.3,
+      "source": "SC.compact → k=.34 (≈ 32 px del brief)"
+    },
+    "hover": {
+      "k": 0.571,
+      "body_px": 56,
+      "source": "brief — v7 no define escala propia de hover: hover_open despliega «overview» (k=.72)"
+    },
+    "hover_open_scene": {
+      "k": 0.72,
+      "body_px": 70.6,
+      "source": "SC.overview / agente principal"
+    },
+    "expanded": {
+      "settings": {
+        "k": 0.7,
+        "body_px": 68.6,
+        "source": "SC.settings"
+      },
+      "wardrobe": {
+        "k": 0.8,
+        "body_px": 78.4,
+        "source": "SC.wardrobe"
+      },
+      "player": {
+        "k": 0.6,
+        "body_px": 58.8,
+        "source": "SC.player"
+      },
+      "gallery": {
+        "k": 0.95,
+        "body_px": 93.1,
+        "source": "SC.gallery"
+      },
+      "default_hc": {
+        "k": 0.85,
+        "body_px": 83.3,
+        "source": "por defecto de escenas hc"
+      },
+      "intro_stage": {
+        "k": 1.1,
+        "body_px": 107.8,
+        "source": "SC.intro"
+      }
+    }
+  },
+  "island": {
+    "background": "#000000",
+    "compact": {
+      "width": 248,
+      "height": 44,
+      "radius_bottom": 22,
+      "avatar_slot": [
+        38.080000000000005,
+        28.560000000000002
+      ]
+    },
+    "expanded": {
+      "width_default": 640,
+      "radius_bottom": 32,
+      "scene_widths": {
+        "intro": 400,
+        "notify": 400,
+        "approve": 400,
+        "prompt": 440,
+        "tool_use": 440,
+        "drop": 440,
+        "choose": 450,
+        "result": 470,
+        "quicklook": 470,
+        "uploading": 470,
+        "gallery": 520
+      }
+    },
+    "native_window_pad": 24,
+    "autoclose_s": 15,
+    "voice_ring": {
+      "shadow": "0 0 0 1.5px color-mix(var(--vc) 55%), 0 5px 14px color-mix(var(--vc) 30%)",
+      "pulse_s": 1.6
+    }
+  },
+  "ui": {
+    "surfaces": {
+      "s0": "#000000",
+      "s1": "#0E0F11",
+      "s2": "#17181B",
+      "s3": "#1D1D20",
+      "card_v7": "#17181C",
+      "field_v7": "#212227",
+      "line_v7": "#24262C"
+    },
+    "stroke": {
+      "line": "rgba(255,255,255,.08)",
+      "line_strong": "rgba(255,255,255,.14)"
+    },
+    "text": {
+      "primary": "#F5F5F7",
+      "fill": "#E5E5EA",
+      "muted": "rgba(235,235,245,.45)",
+      "muted_v7": "#8E919A",
+      "ink_on_light": "#0B0B0C"
+    },
+    "accent": {
+      "blue_v7": "#3B9EFF",
+      "sky_v7": "#80C4FF",
+      "ok": "#30D158",
+      "ok_bg": "rgba(48,209,88,.12)",
+      "error": "#FF453A",
+      "error_bg": "rgba(255,69,58,.10)",
+      "coral_v7": "#FF7A70"
+    },
+    "radius": {
+      "card": 24,
+      "card_inner": 20,
+      "pill": 14,
+      "button": 11,
+      "control": 12,
+      "island_compact": 22,
+      "island_expanded": 32
+    },
+    "font": {
+      "v7": "'Segoe UI Variable','Segoe UI',system-ui,sans-serif",
+      "catalog": "Nunito, system-ui, sans-serif"
+    }
+  },
+  "motion": {
+    "blink": {
+      "interval_s": {
+        "min": 2.5,
+        "max": 6
+      },
+      "duration_s": 0.14,
+      "curve": "sin(pi * t / duration)",
+      "closed_scale_y": 0.08,
+      "half_open_scale": 0.6
+    },
+    "breathing": {
+      "amplitude": 0.014,
+      "angular_speed_rad_s": 2.2,
+      "sleeping_rad_s": 1.1
+    },
+    "smoothing_rate_per_s": {
+      "look_and_glow": 9,
+      "mouth": 16,
+      "island_follow": 10,
+      "lean": 9,
+      "lean_chase": 13,
+      "arms_gain": 1.5
+    },
+    "springs": {
+      "squash": {
+        "stiffness": 190,
+        "damping": 9,
+        "mass": 1
+      },
+      "jump": {
+        "stiffness": 60,
+        "damping": 7,
+        "mass": 1
+      },
+      "tail": {
+        "stiffness": 70,
+        "damping": 7.5,
+        "mass": 1
+      },
+      "ui_default": {
+        "stiffness": 300,
+        "damping": 30,
+        "mass": 1
+      },
+      "chase": {
+        "stiffness": 92,
+        "damping": 10.5,
+        "mass": 1
+      }
+    },
+    "easing": {
+      "spring_island": "cubic-bezier(.3,1.35,.5,1)",
+      "out_expo_v7": "cubic-bezier(.16,1,.3,1)",
+      "island_close": "cubic-bezier(.45,0,.2,1)",
+      "spring_linear_catalog": "linear(0,.17 3%,.52 7%,.86 12%,1.04 17%,1.1 22%,1.07 28%,1.01 36%,.99 46%,1)",
+      "ease_optical_catalog": "cubic-bezier(.2,.8,.2,1)"
+    },
+    "durations_ms": {
+      "island_resize_open": 550,
+      "island_resize_close": 340,
+      "island_radius": 450,
+      "optical_min": 150,
+      "optical_max": 300,
+      "stagger_step": 32,
+      "stagger_base": 70,
+      "stagger_enter": 600,
+      "press_in": 80,
+      "burst_wave": 3000
+    },
+    "rules": {
+      "press_scale": [
+        0.93,
+        0.97
+      ],
+      "v7_hover_scale": 1.05,
+      "v7_press_scale": 0.94,
+      "enter_blur_px": 12,
+      "exit_is_half_of_enter": true,
+      "reduced_motion": "todo a 0 ms",
+      "animate_only": [
+        "transform",
+        "opacity"
+      ]
+    }
+  }
+}

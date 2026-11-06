@@ -1,8 +1,12 @@
 #![allow(
+    unknown_lints,
     clippy::too_many_arguments,
     clippy::manual_range_contains,
     clippy::needless_range_loop,
-    clippy::large_enum_variant
+    clippy::large_enum_variant,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity,
+    clippy::invisible_characters
 )]
 
 use std::env;

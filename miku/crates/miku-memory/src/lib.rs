@@ -728,7 +728,7 @@ pub fn beta_dispatcher(name: &str) -> bool {
             &empty_cache,
             &turns,
             active_query,
-            135,
+            180,
         )
         .expect("tight budget assembly");
         assert!(tight.evicted_turns_count > 0);
