@@ -1,0 +1,415 @@
+# Miku · Plan Maestro v1.2
+
+> Estado: propuesta para aprobación · Fecha: 2026-11-04 · Repo: nuevo, versionado desde 0.1.0
+> Este documento es la fuente de verdad. Los cambios entran por `CR:` (sección 11). Ningún paso se construye sin su ficha ni sin tests escritos primero.
+
+---
+
+## 1. Visión y alcance
+
+**Qué es:** un orquestador personal de agentes para programadores que vive en una Island arriba al centro de la pantalla de Windows. Coordina agentes (Claude Code, Cursor, Antigravity, GitHub), controla el PC y el navegador bajo un Gatekeeper estricto, y se extiende al móvil con Miku-Link.
+
+**Qué NO es en v1.0:** no es multiplataforma (solo Windows 10/11 más Android), no incluye TTS, ni skills WASM, ni integraciones de negocio (pagos, cripto, mensajería). Todo eso va al roadmap.
+
+**Restricciones de partida:** binario único en Rust, bajo consumo en reposo, arranque en menos de 1 s con Windows, privacidad por defecto (sin telemetría, sin cuenta).
+
+---
+
+## 2. Qué aprendimos de otros proyectos
+
+### 2.1 Miku v0.x (tu repo anterior)
+Island con Tauri 2 y gateway Python (FastAPI). Instalador de 177 MB, unas 40 piezas sueltas en la raíz, configuración en varios JSON, sin ADRs ni criterios de terminado. Se rescatan **ideas** (ruteo sin tokens, failover de keys en 429, hooks con aprobación `Y`/`N`, agentes aislados, QR de enlace móvil, modo Low-Cost); el código se descarta.
+
+### 2.2 OpenClaw
+Un solo proceso largo dueño del estado; WebSocket tipado en loopback con token; cola serializada por sesión; memoria en markdown más índice de búsqueda; skills como carpetas con manifiesto; dispositivos acompañantes como nodos. **Evitamos** sus valores por defecto permisivos (shell sin aprobación, sandbox apagado) y su exposición a skills maliciosas: Miku es deny-by-default.
+
+### 2.3 Harness DeepSeek (Reasonix, DeepSeek-TUI)
+Prefijo de prompt estable para aprovechar la caché del proveedor; modelo barato por defecto con escalada por turno; reparación de llamadas a herramientas malformadas; modo plan; comando `doctor`; MCP de primera clase.
+
+### 2.4 Coucou (Louis-CFM/coucou) — lo que observé en su README
+Proyecto de referencia (6.6k estrellas, 773 commits). Una Island para agentes de programación en Mac, Windows, Linux, iPhone y Android. Lo que adoptamos y lo que no:
+
+| Observación en Coucou | Qué hacemos en Miku |
+|---|---|
+| Hook mínimo que **no bloquea al agente si la app no corre** (sale de inmediato) | `miku hook` con fail-open: si Miku no está, el agente sigue sin esperar (F-04) |
+| Instalar hooks **hace copia de seguridad del `settings.json`, fusiona y muestra el diff** antes de escribir | Mismo flujo, sin excepciones (paso 3.13) |
+| Enlace móvil **desactivado por defecto**, solo red local, **certificado fijado al emparejar**, código de emparejamiento que se invalida con «Pair again» | Se adopta tal cual en F-17 |
+| La aprobación en el móvil queda **atada a la solicitud exacta**; Allow exige huella o biometría, Deny no; comandos largos solo se permiten en el PC | Se adopta; añadimos que capacidades de riesgo solo se aprueban en el PC |
+| Notificaciones push vía un **relay sin estado** que solo ve el nombre y estado del agente | Opcional, paso 4.11; el túnel sigue siendo la vía principal |
+| **Modo demo**: sesión guiada sin escribir nada a disco ni tocar claves | Se adopta como agente simulado de pruebas y onboarding (paso 2.11) |
+| El **actualizador pide consentimiento**, y verifica el SHA-256 del instalador | Se adopta (paso 5.4) |
+| Modelos pesados (Parakeet, ~650 MB) **se descargan con un clic**, no van en el instalador | Nuestros modelos de STT y wake word se descargan bajo demanda con SHA-256 |
+| Código MIT, pero **nombre, personaje, iconos y sonidos con derechos reservados** (`LICENSE-ASSETS.md`) | Licencia dividida (paso 1.9) |
+| Tags de release **por plataforma** (`v*`, `windows-v*`, `android-v*`) y un `windows-latest` rodante | `miku-v*` y `android-v*`, más `latest` |
+| Catálogo **declarativo** de «pills» como fuente única de verdad | Catálogo declarativo de integraciones (F-29) |
+| Documentación de agentes (`docs/AGENTS.md`) y del protocolo del móvil (`docs/ANDROID_LINK.md`) | Docs de protocolo y de agentes desde la Fase 1 |
+| Cadencia de versiones pequeñas y frecuentes con CHANGELOG | Igual: cada fase cierra con una versión usable |
+| Su variante de Windows usa Tauri 2 con canvas | Confirma que la ruta WebView es viable; lo nuestro la hace bajo demanda para cuidar el reposo |
+
+**Lo que NO copiamos:** sus integraciones de negocio (Stripe, cripto, WhatsApp, etc.), su personaje Mochi ni sus sonidos (están reservados), ni su alcance multiplataforma. Coucou observa y aprueba; Miku además **actúa** (PC y navegador), por eso el Gatekeeper es más estricto.
+
+---
+
+## 3. Principios y presupuestos
+
+1. **Medir antes de decidir.** Riesgos técnicos se resuelven con spikes que producen números.
+2. **Contrato primero.** El protocolo se define y congela antes que la lógica.
+3. **TDD estricto.** Rojo, verde, refactor. Sin tests no está terminado.
+4. **Deny-by-default.** Toda capacidad pasa por el Gatekeeper.
+5. **Honestidad verificable.** Estados: ESCRITO, PENDIENTE-LOCAL, VERIFICADO (con salida real pegada), FALLIDO.
+6. **Cada fase termina con algo usable.**
+7. **Tres costes:** recursos de la PC, tokens/dinero y atención del usuario.
+
+| Métrica | Objetivo (a confirmar en Fase 0) |
+|---|---|
+| RAM en reposo, árbol de procesos completo, pastilla nativa | ≤ 30 MB |
+| RAM con Island expandida y WebView2 | por fijar (spike 0.1) |
+| CPU en reposo | 0.0 % y ≤ 1 despertar/s |
+| Arranque hasta aceptar conexiones | < 100 ms |
+| Arranque con Windows hasta Island visible | < 1 s |
+| Tamaño del `.exe` sin modelos | < 15 MB |
+| Tokens en charla casual | 0 (ruteo local) |
+| Gasto diario por proyecto | tope configurable, aviso al 80 % |
+
+---
+
+## 4. Arquitectura
+
+```
+Claude Code ─┐        ┌───────────────────── miku.exe (único) ────────────────────┐
+Cursor ──────┤ hooks/ │ miku-gateway (axum WS) ─► EventBus ─► miku-core (FSM,colas)│
+Antigravity ─┤ MCP    │        ▲                       │             │            │
+GitHub ──────┘◄──────►│ miku-agents (harness)          ▼             ▼            │
+Móvil ─(LAN/túnel)───►│ miku-mcp (host+cliente)   miku-gatekeeper ◄─ perfiles     │
+                      │ miku-memory · miku-skills       │                         │
+                      │ miku-browser (CDP) · miku-platform (Win32)                │
+                      │ Pastilla nativa (siempre) ◄── estado                      │
+                      │ WebView2 (solo al expandir) ◄── IPC tipado               │
+                      └───────────────────────────────────────────────────────────┘
+```
+
+**UI híbrida (ADR-001 revisado):**
+- La pastilla colapsada es una **ventana nativa en capas**, sin WebView, con una instantánea del avatar.
+- Al expandir, se crea un **WebView2**; tras unos segundos colapsada, se destruye.
+- La interfaz es HTML, CSS y TypeScript **sin framework**. El avatar es un canvas con resortes que se duermen y parámetros en `rig.toml`.
+- El contenido de agentes se muestra **siempre como texto**, nunca como HTML. CSP estricta, solo recursos locales embebidos, sin DevTools en release.
+- Los tipos Rust y TypeScript se generan desde `miku-protocol` (ts-rs).
+- La RAM se mide sobre el **árbol completo de procesos**, incluidos los `msedgewebview2` hijos. El spike 0.1 compara este modo con WebView siempre vivo.
+
+**Regla de dependencias:** `miku-protocol` no depende de nada. `miku-core` y `miku-gatekeeper` solo de `miku-protocol`. Ninguna capacidad se ejecuta sin pasar por `miku-gatekeeper`. La UI nunca habla con agentes: solo recibe estado.
+
+**Hilos:** daemon en tokio `current_thread`; hilo de UI; audio y captura existen solo mientras se usan.
+
+| Crate | Responsabilidad |
+|---|---|
+| `miku-protocol` | Contratos serde (sin I/O) |
+| `miku-core` | Bus, FSM de la Island, colas por sesión, modo gaming |
+| `miku-gatekeeper` | Reglas allow/ask/deny, perfiles, auditoría, kill switch |
+| `miku-gateway` | Servidor Axum, sesiones, autenticación, emparejamiento |
+| `miku-agents` | Harness: bucle, proveedores, ahorro de tokens |
+| `miku-mcp` | Host y cliente MCP |
+| `miku-memory` | Markdown más índice SQLite FTS5 |
+| `miku-skills` | Carga y hot-reload |
+| `miku-browser` | Control de navegador por CDP |
+| `miku-ui` | Pastilla nativa y host WebView2 |
+| `miku-audio`, `miku-vision` | PTT, wake word, STT; capturas puntuales |
+| `miku-platform` | Win32: autostart, fullscreen, DPAPI, hotkeys |
+| `miku-tunnel` | Acceso remoto seguro |
+| `miku-cli` | `miku doctor`, `miku hook` |
+
+---
+
+## 5. Estructura del repositorio
+
+```
+miku/
+├── Cargo.toml · rust-toolchain.toml · .cargo/config.toml
+├── LICENSE (código, MIT) · LICENSE-ASSETS.md (marca, avatar, sonidos)
+├── README.md · CHANGELOG.md · CONTRIBUTING.md · SECURITY.md
+├── crates/            # un crate por responsabilidad
+├── ui/                # TypeScript sin framework, con tests (vitest)
+├── android/           # app nativa Kotlin sobre el protocolo v1
+├── assets/            # avatar pack, temas, sonidos (con licencia propia)
+├── skills/examples/   # skills de ejemplo con skill.toml
+├── docs/
+│   ├── adr/           # una decisión, un archivo
+│   ├── design/        # design docs por función
+│   ├── protocol/      # miku-link, hooks, enlace móvil
+│   ├── agents/        # cómo conectar cada agente
+│   └── user/
+├── tests/e2e/         # agente simulado de punta a punta
+├── tools/             # scripts de desarrollo y medición
+└── .github/           # CI, plantillas de issue, de PR y de CR
+```
+Nada suelto en la raíz. Los modelos pesados no se versionan: se descargan bajo demanda.
+
+---
+
+## 6. Catálogo de funciones
+
+Cada función tiene una ficha completa (qué hace, flujo, estados, errores, seguridad, rendimiento, tests) en `docs/design/F-XX.md` **antes** de construirse.
+
+| ID | Función | Resumen |
+|---|---|---|
+| F-01 | Island | Arriba al centro; Idle → Peek → Expanded → Listening → Alert → Gaming; hover con retardo, pin, Esc; sin robar foco |
+| F-02 | Avatar | Canvas desde `rig.toml`; resortes que se duermen; estados idle, escuchando, pensando, hablando, alerta, éxito, error, dormida; clips opcionales |
+| F-03 | Gatekeeper | allow/ask/deny por perfil, jaula de rutas, TTL, tarjeta Y/N, auditoría |
+| F-04 | Bridge de agentes | Claude Code (hooks), Cursor (MCP), Antigravity (a investigar), GitHub (webhooks/API); hook con fail-open |
+| F-05 | Cola de órdenes | Serializada por sesión; cancelable |
+| F-06 | Agentes propios | `agent.toml` más `SOUL.md`; historial aislado |
+| F-07 | Host y cliente MCP | Expone herramientas de Miku y consume servidores externos |
+| F-08 | Proveedores y keys | Selector en la Island, rotación en 429, secretos en DPAPI |
+| F-09 | Ahorro de tokens | Ruteo local, prefijo estable, escalada por turno, topes |
+| F-10 | Memoria | Markdown más FTS5; recuperación bajo demanda |
+| F-11 | Skills con hot-reload | `skill.toml` con capacidades declaradas |
+| F-12 | Control de PC | Clic, teclado, ventanas, archivos, portapapeles, shell; todo tras el Gatekeeper |
+| F-13 | Perfiles de proyecto | `.miku.toml`; se aplica tras confirmar la primera vez |
+| F-14 | Feed técnico | RSS, CI, PRs, radar de repos con ETag |
+| F-15 | Medios y ducking | Pista actual, controles, atenuación al 20 % |
+| F-16 | Voz y visión | PTT, wake word, STT local; captura puntual con permiso |
+| F-17 | Miku-Link móvil | Ver sección 7.4; paridad con la Island |
+| F-18 | Modo gaming y Low-Cost | Pantalla completa más lista editable; retiene eventos |
+| F-19 | Arranque silencioso | Clave `Run`, sin splash |
+| F-20 | Auditoría | JSONL con hash encadenado |
+| F-21 | Kill switch | Hotkey global que revoca todo |
+| F-22 | `miku doctor` | Diagnóstico de puertos, permisos, skills, keys y presupuestos |
+| F-23 | Historial de sesiones | Búsqueda local |
+| F-24 | Actualizaciones | Con consentimiento y SHA-256 |
+| F-25 | Control de navegador | CDP con perfil propio; dominios permitidos por perfil; descargas enjauladas |
+| F-26 | Productividad | Tareas, foco/pomodoro, captura rápida, resumen del día, tiempo de pantalla |
+| F-27 | Rutinas | Grabar una tarea exitosa y repetirla sin tokens |
+| F-28 | Modo demo | Agente simulado; no escribe a disco ni toca claves |
+| F-29 | Catálogo declarativo | Integraciones y tarjetas definidas en datos, una sola fuente de verdad |
+| F-30 | Licencia y marca | Código MIT; marca y arte reservados |
+
+**Orden de control de PC (coste creciente):** herramienta o MCP directo → navegador por CDP con texto del DOM → UI Automation de Windows → visión por píxeles solo como último recurso y con permiso.
+
+**Ejemplo, "ve a Pinterest, busca una imagen y descárgala":** Gatekeeper pide el dominio → se abre el navegador con perfil de Miku → búsqueda y lectura en texto → elige candidatas (miniaturas solo si hace falta, con permiso) → descarga a carpeta enjaulada → auditoría → tarjeta con la imagen en la Island y en el móvil. Pinterest puede exigir login o bloquear automatización; los derechos de la imagen son responsabilidad del usuario.
+
+---
+
+## 7. Contratos
+
+### 7.1 miku-link v1 (`ws://127.0.0.1:47400/link`)
+```json
+{"v":1,"id":"uuid","reply_to":"uuid?","msg":{"type":"agent_event","data":{"agent":"claude_code","kind":"needs_input","title":"Editar src/main.rs"}}}
+```
+Tipos: `hello`, `hello_ack`, `ping`, `pong`, `agent_event`, `permission_request`, `permission_decision`, `command`, `error`. Primer mensaje: `hello` con token; tamaño máximo por trama; versión desconocida → `unsupported_version`; cambios incompatibles solo con versión nueva y ADR.
+
+### 7.2 Perfil de proyecto (`.miku.toml`)
+```toml
+name = "miku"
+root = "."
+[allow]
+fs_read = ["**"]
+shell = ["cargo test", "cargo clippy"]
+[ask]
+fs_write = ["src/**"]
+network = ["api.github.com"]
+[deny]
+shell = ["rm -rf *"]
+[agents]
+default = "claude_code"
+key = "deepseek-main"   # referencia, nunca el valor
+```
+
+### 7.3 Skill y Avatar Pack
+- `skill.toml`: `name`, `version`, `triggers`, `capabilities`, `entry`, `os`.
+- Avatar Pack: carpeta con `manifest.toml`, `layers/*.svg`, `rig.toml` (resortes, mirada, parpadeo, squish) y `clips/` opcional. Se recarga en caliente; un paquete inválido se rechaza y se conserva el anterior.
+
+### 7.4 Miku-Link móvil (paridad Island ↔ celular)
+Reglas: desactivado por defecto; solo LAN al inicio, túnel después; emparejamiento por QR con certificado fijado; el código se invalida con «Emparejar de nuevo» y desconecta todos los teléfonos; **la aprobación va atada a la solicitud exacta**; Allow exige biometría, Deny no; capacidades de riesgo (shell largo, borrado) solo se aprueban en el PC; el móvil nunca guarda secretos.
+
+| Island | Móvil |
+|---|---|
+| Peek y hover | Notificación persistente, widget, pantalla de bloqueo |
+| Tarjeta de permiso | Notificación accionable con biometría |
+| Feed de agentes | Misma vista con historial |
+| Enviar instrucción | Chat con cola y cancelación |
+| Push-to-talk | El móvil graba, el PC transcribe |
+| Visión | Captura bajo demanda con permiso |
+| Kill switch | Botón siempre visible |
+| Selector de modelo y key | Elegir sí, ver secretos nunca |
+| Medios, productividad | Control remoto, tareas, foco |
+| Archivos y portapapeles | En ambos sentidos |
+
+---
+
+## 8. Seguridad (resumen)
+
+| Amenaza | Mitigación |
+|---|---|
+| Agente o skill maliciosa pide capacidades | Deny-by-default, capacidades declaradas, aprobación visible |
+| Inyección de prompt desde web o archivos | Contenido marcado como no confiable; las acciones siguen pasando por el Gatekeeper |
+| Otro proceso local usa el puerto | Token obligatorio, comparación en tiempo constante, loopback |
+| Red local hostil | Emparejamiento por QR, certificado fijado, token rotativo |
+| Robo de keys | Credential Manager/DPAPI, redacción en logs |
+| Escape de la jaula de rutas | Normalización canónica, symlinks, pruebas de propiedad y fuzzing |
+| XSS en la Island | Contenido de agentes solo como texto, CSP estricta, sin remoto |
+| Instalación de hooks que rompe la config del agente | Copia de seguridad, diff visible, confirmación |
+
+---
+
+## 9. Plan por fases
+
+Cada paso tiene ficha completa antes de empezar: objetivo, entregable usable, tests primero, criterios medibles, presupuesto afectado, riesgos, dependencias y definición de terminado.
+
+### Fase 0 · Spikes medidos (desechables)
+| ID | Objetivo | Criterio |
+|---|---|---|
+| 0.1 | Pastilla nativa vs WebView2 siempre vivo vs WebView2 bajo demanda | RAM del árbol de procesos, CPU, arranque; cierra ADR-005 |
+| 0.2 | Avatar canvas con resortes que duermen, datos en `rig.toml` | 0 fps en reposo, fidelidad visual |
+| 0.3 | Wake word offline en Rust | Latencia y CPU continua |
+| 0.4 | STT local español e inglés | Latencia, RAM, arranque bajo demanda |
+| 0.5 | Banco de medición de idle (con procesos hijo) | Script repetible en CI |
+| 0.6 | Integración Cursor y Antigravity | Mecanismo real documentado |
+| 0.7 | Navegador por CDP con perfil propio | Búsqueda y descarga de punta a punta |
+
+### Fase 1 · Núcleo y contratos
+| ID | Objetivo | Tests primero |
+|---|---|---|
+| 1.1 | Monorepo, protocolo v1, daemon con WebSocket | Handshake, token, ping/pong |
+| 1.2 | CI, lint, `cargo-deny`, ADRs, plantilla de CR | Pipeline verde |
+| 1.3 | Bus de eventos y FSM de la Island | Todas las transiciones |
+| 1.4 | Config TOML única, logging sin secretos | Esquema estricto |
+| 1.5 | Perfiles `.miku.toml` | Archivos hostiles, herencia |
+| 1.6 | Pantalla completa y modo gaming | Retención de eventos |
+| 1.7 | Autostart silencioso y benchmark | Menos de 1 s |
+| 1.8 | `miku doctor` v0 | Salida por escenario |
+| 1.9 | Licencia dividida y avisos | Verificación de archivos de licencia en CI |
+
+### Fase 2 · Island y Gatekeeper
+| ID | Objetivo | Tests primero |
+|---|---|---|
+| 2.1 | Pastilla nativa arriba al centro, sin foco | Posición multi-monitor |
+| 2.2 | Host WebView2 bajo demanda | Ciclo de vida sin fugas |
+| 2.3 | Puente IPC tipado y CSP | Contrato Rust y TS idéntico |
+| 2.4 | Hover, expansión, pin y Esc | FSM y entradas simuladas |
+| 2.5 | Avatar canvas desde `rig.toml` | Regresión visual por estado |
+| 2.6 | Gatekeeper núcleo | Propiedad: jaula de rutas |
+| 2.7 | Auditoría con hash encadenado | Detección de manipulación |
+| 2.8 | Tarjeta de permisos Y/N | TTL y caducidad |
+| 2.9 | Kill switch global | Estado seguro desde cualquier estado |
+| 2.10 | Suspensión total en idle | 0 frames y sin WebView en reposo |
+| 2.11 | Modo demo y agente simulado | No escribe a disco |
+
+### Fase 3 · Agentes, MCP y memoria
+| ID | Objetivo | Tests primero |
+|---|---|---|
+| 3.1 | Adaptador Claude Code (hooks, fail-open) | Fixtures reales; agente no bloqueado si Miku no corre |
+| 3.2 | Cola serializada por sesión | Orden y cancelación |
+| 3.3 | Host MCP | Servidor y cliente de prueba |
+| 3.4 | Cliente MCP | Timeout, herramienta denegada |
+| 3.5 | Adaptadores Cursor, Antigravity, GitHub | Contrato por agente |
+| 3.6 | Secretos en DPAPI y selector de keys | Redacción y rotación |
+| 3.7 | Harness: bucle, proveedores, failover | Bucle acotado, 429 simulado |
+| 3.8 | Ahorro de tokens | Prefijo estable, topes |
+| 3.9 | Memoria markdown y FTS5 | Búsqueda y compactación |
+| 3.10 | Skills con hot-reload | Manifiesto inválido conserva la versión |
+| 3.11 | Feed técnico | ETag y fuentes caídas |
+| 3.12 | Agentes propios | Aislamiento |
+| 3.13 | Instalador de hooks seguro | Copia de seguridad, diff, restauración |
+
+### Fase 4 · Sentidos, PC, navegador y móvil
+| ID | Objetivo | Tests primero |
+|---|---|---|
+| 4.1 | Push-to-talk y STT | Audios de referencia |
+| 4.2 | Wake word y ducking | Restauración de volumen |
+| 4.3 | Visión bajo demanda | Denegación y compresión |
+| 4.4 | Control de PC por perfil | Matriz acción por regla |
+| 4.5 | Control de navegador (CDP) | Dominios permitidos, descarga enjaulada |
+| 4.6 | Productividad | Temporizador al próximo vencimiento |
+| 4.7 | Rutinas | Reproducción determinista |
+| 4.8 | Miku-Link LAN con QR | Token expirado, certificado fijado, reconexión |
+| 4.9 | Núcleo móvil y app con paridad | Matriz Island ↔ móvil |
+| 4.10 | Túnel seguro | Rotación de token |
+| 4.11 | Relay de notificaciones sin estado (opcional) | Solo viaja nombre y estado |
+
+### Fase 5 · Pulido y 1.0.0
+| ID | Objetivo |
+|---|---|
+| 5.1 | Benchmarks de RAM y arranque en CI con umbral |
+| 5.2 | Fuzzing de protocolo y jaula de rutas |
+| 5.3 | Auditoría de seguridad y dependencias |
+| 5.4 | Instalador firmado, actualizaciones con consentimiento y SHA-256 |
+| 5.5 | Documentación de usuario, skills y contribución |
+| 5.6 | Release 1.0.0 |
+
+---
+
+## 10. Estrategia de pruebas
+
+- **Unitarias** en cada crate; **contrato**: forma JSON estable del protocolo.
+- **Integración** con daemon real en puerto efímero.
+- **Propiedad y fuzzing**: parser del protocolo, de `.miku.toml` y jaula de rutas.
+- **UI**: vitest para TypeScript; regresión visual del avatar por estado.
+- **E2E** con agente simulado: evento → permiso → decisión → auditoría.
+- **Rendimiento en CI**: arranque, RAM en reposo y tamaño del binario con umbral que falla el build.
+- **Manuales** (checklist versionada): multi-monitor, pantalla completa de juegos, hover real.
+
+---
+
+## 11. Gobernanza y proceso
+
+- **Design doc** por función antes de código; **ADR** por decisión.
+- **Ramas pequeñas y PRs** con CI obligatorio: `fmt`, `clippy -D warnings`, tests, `cargo-deny`.
+- **Commits convencionales** y SemVer: 0.x hasta congelar el protocolo v1; **1.0.0** cuando la definición de terminado se cumpla en todas las fases.
+- **Releases pequeños y frecuentes**, un CHANGELOG por versión, tags `miku-v*` y `android-v*`.
+- **Definición de terminado:** tests verdes, lint limpio, docs al día, ADR si aplica, evidencia local pegada.
+- **Control de cambios:** `CR: [AÑADIR | MODIFICAR | QUITAR | REPRIORIZAR | CAMBIAR-DECISIÓN] Qué / Por qué`. Primero análisis de impacto (funciones, pasos, contratos, coste S/M/L, efecto en presupuestos); solo con «aprobado CR-XX» se actualiza el plan. Cada 5 CRs, revisión de alcance.
+- **Licencia:** código MIT; nombre, avatar, iconos y sonidos con derechos reservados.
+
+---
+
+## 12. Riesgos y plan B
+
+| Riesgo | Plan B |
+|---|---|
+| Procesos de WebView2 elevan la RAM | WebView bajo demanda; si no basta, Island nativa y WebView solo para ajustes |
+| Crear el WebView al expandir añade latencia | Retardo de hover, o WebView precalentado un tiempo tras el último uso |
+| Rive sin runtime ligero | Avatar por capas con `rig.toml`; Lottie solo para clips |
+| Wake word costoso | Solo PTT por defecto |
+| Antigravity sin API estable | Observación por archivos o logs con permiso explícito |
+| Sitios que bloquean automatización | Perfil persistente con login manual; extensión como alternativa futura |
+| Alcance creciente | Todo por CR y backlog con estimación |
+
+---
+
+## 13. Roadmap posterior a 1.0
+
+WASM para skills, TTS, macOS y Linux, registro de skills firmadas, agentes multi-PC, relay propio para notificaciones.
+
+---
+
+## 14. Decisiones (ADR)
+
+| ADR | Decisión | Estado |
+|---|---|---|
+| 001 | Binario Rust único; UI en WebView2 bajo demanda; pastilla nativa en reposo | Por validar (spike 0.1) |
+| 002 | Runtime tokio `current_thread` | Fijado |
+| 003 | miku-link: WebSocket y JSON versionado, loopback | Fijado |
+| 004 | Host MCP con `rmcp` | Por validar |
+| 005 | Pastilla nativa vs WebView siempre vivo | Pendiente de spike 0.1 |
+| 006 | Avatar: canvas con `rig.toml`; Lottie para clips | Pendiente de spike 0.2 |
+| 007 | Gatekeeper deny-by-default | Fijado |
+| 008 | Repo nuevo, `miku-legacy` archivado, SemVer desde 0.1.0 | Pendiente de confirmación |
+| 009 | Navegador por CDP con perfil propio | Pendiente de spike 0.7 |
+| 010 | Licencia dividida: código MIT, marca y arte reservados | Pendiente de confirmación |
+
+---
+
+## 15. Preguntas abiertas
+1. Herramienta con la que haces el avatar y HTML del canvas actual (spike 0.2).
+2. Tu PC (RAM, GPU, portátil o sobremesa).
+3. Navegador de uso diario y aceptación del perfil propio de Miku.
+4. Sitios que deben estar permitidos desde el inicio.
+5. Notificaciones al móvil fuera de casa: ¿requisito de v1 o solo LAN?
+6. ¿Aceptas la licencia dividida (código MIT, marca y avatar reservados)?
+7. ¿Confirmas repo nuevo y SemVer desde 0.1.0?
+
+---
+
+## 16. Changelog del plan
+- **v1.2 (2026-11-04):** lecciones de Coucou (hooks con respaldo y fail-open, enlace móvil con certificado fijado y aprobación atada a la solicitud, modo demo, licencia dividida, modelos bajo demanda, tags por plataforma, catálogo declarativo); pasos 1.9, 2.11, 3.13 y 4.11.
+- **v1.1:** UI con WebView2 bajo demanda; repo nuevo; F-25 navegador, F-26 productividad, F-27 rutinas; paridad móvil.
+- **v1.0:** plan inicial.

@@ -1,0 +1,855 @@
+Windows PowerShell 5.1
+Copyright (C) Microsoft Corporation. Todos los derechos reservados.
+
+PS C:\Users\cxmluwu\Desktop\prompt-genie> # 1. Crear estructura limpia del spike 0.1a
+PS C:\Users\cxmluwu\Desktop\prompt-genie> New-Item -ItemType Directory -Force -Path "miku\spikes\spike-01-ui\src" | Out-Null
+PS C:\Users\cxmluwu\Desktop\prompt-genie> Set-Location "miku\spikes\spike-01-ui"
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui>
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> # 2. Escribir Cargo.toml
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> @'
+>> [package]
+>> name = "miku-spike-01a-proctree"
+>> version = "0.1.0"
+>> edition = "2021"
+>> description = "Spike 0.1a: Real child-process tree private memory & spawn latency measurer (20 repetitions, median/p95, strict provenance verifier)"
+>> license = "MIT"
+>>
+>> [profile.release]
+>> lto = true
+>> codegen-units = 1
+>> panic = "abort"
+>> strip = true
+>> '@ | Set-Content -Path "Cargo.toml" -Encoding UTF8
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui>
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> # 3. Escribir src/lib.rs
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> @'
+>> #![forbid(unsafe_code)]
+>> #![deny(warnings)]
+>>
+>> use std::collections::{HashSet, VecDeque};
+>>
+>> pub const MAX_IDLE_PRIVATE_MB: f64 = 30.0;
+>> pub const MAX_HOVER_TO_VISIBLE_P95_MS: f64 = 150.0;
+>> pub const REQUIRED_REPETITIONS: usize = 20;
+>>
+>> pub const GRANDCHILD_POLL_INTERVAL_MS: u64 = 25;
+>> pub const GRANDCHILD_POLL_TIMEOUT_MS: u64 = 3000;
+>> pub const POST_CLOSE_SETTLE_MS: u64 = 150;
+>>
+>> pub const STEP_01A_REFERENCE_VERDICT: &str =
+>>     "MEDIDO (referencia de proceso de prueba, sin veredicto de producto)";
+>>
+>> #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+>> pub struct ProcessIdentity {
+>>     pub pid: u32,
+>>     pub name_lower: String,
+>> }
+>>
+>> impl ProcessIdentity {
+>>     pub fn new(pid: u32, name: &str) -> Self {
+>>         Self {
+>>             pid,
+>>             name_lower: name.trim().to_ascii_lowercase(),
+>>         }
+>>     }
+>> }
+>>
+>> #[derive(Debug, Clone, PartialEq, Eq)]
+>> pub struct ProcessSample {
+>>     pub pid: u32,
+>>     pub parent_pid: u32,
+>>     pub name: String,
+>>     pub private_bytes: u64,
+>> }
+>>
+>> impl ProcessSample {
+>>     pub fn identity(&self) -> ProcessIdentity {
+>>         ProcessIdentity::new(self.pid, &self.name)
+>>     }
+>> }
+>>
+>> #[derive(Debug, Clone, PartialEq, Eq)]
+>> pub struct ProcessTreePrivateMemory {
+>>     pub root_pid: u32,
+>>     pub process_count: usize,
+>>     pub webview2_child_count: usize,
+>>     pub total_private_bytes: u64,
+>>     pub tree_identities: Vec<ProcessIdentity>,
+>> }
+>>
+>> impl ProcessTreePrivateMemory {
+>>     pub fn descendant_count(&self) -> usize {
+>>         self.process_count.saturating_sub(1)
+>>     }
+>>
+>>     pub fn total_private_mb(&self) -> f64 {
+>>         self.total_private_bytes as f64 / (1024.0 * 1024.0)
+>>     }
+>> }
+>>
+>> #[derive(Debug, Clone, Copy, PartialEq)]
+>> pub struct DistributionStats {
+>>     pub sample_count: usize,
+>>     pub min: f64,
+>>     pub median_p50: f64,
+>>     pub p95: f64,
+>>     pub max: f64,
+>> }
+>>
+>> #[derive(Debug, Clone, PartialEq)]
+>> pub enum RowEvaluationKind {
+>>     CalibrationReference,
+>>     ProductModeThreshold,
+>> }
+>>
+>> #[derive(Debug, Clone, PartialEq)]
+>> pub enum MetricCell {
+>>     Measured {
+>>         stats: DistributionStats,
+>>         provenance_pid: u32,
+>>         provenance_present_in_snapshot: bool,
+>>         min_tree_process_count: usize,
+>>         os_probe: String,
+>>     },
+>>     PendingLocal { reason: String },
+>> }
+>>
+>> #[derive(Debug, Clone, PartialEq)]
+>> pub struct Step01ReportRow {
+>>     pub step_id: String,
+>>     pub label: String,
+>>     pub evaluation_kind: RowEvaluationKind,
+>>     pub private_ram_mb: MetricCell,
+>>     pub latency_ms: MetricCell,
+>>     pub surviving_orphans_after_close: Option<Vec<ProcessIdentity>>,
+>> }
+>>
+>> #[derive(Debug, Clone, PartialEq, Eq)]
+>> pub enum VerificationError {
+>>     EmptyReport,
+>>     InvalidSampleCount { row_label: String, found: usize, expected: usize },
+>>     ZeroProvenancePid { row_label: String },
+>>     ProvenancePidNotInSnapshot { row_label: String, pid: u32 },
+>>     TreeMissingDescendant { row_label: String, min_process_count: usize },
+>>     EmptyOsProbe { row_label: String },
+>>     NonFiniteMeasurement { row_label: String },
+>>     ZeroPrivateBytesMeasured { row_label: String },
+>>     OrphanProcessesRemaining { row_label: String, orphans: Vec<ProcessIdentity> },
+>> }
+>>
+>> pub fn parse_tsv_process_line(line: &str) -> Option<ProcessSample> {
+>>     let trimmed = line.trim();
+>>     if trimmed.is_empty() {
+>>         return None;
+>>     }
+>>     let cols: Vec<String> = trimmed
+>>         .split('\t')
+>>         .map(|raw| {
+>>             let s = raw.trim();
+>>             if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+>>                 s[1..s.len() - 1].replace("\"\"", "\"")
+>>             } else {
+>>                 s.to_string()
+>>             }
+>>         })
+>>         .collect();
+>>
+>>     if cols.len() < 4 {
+>>         return None;
+>>     }
+>>
+>>     let pid = cols[0].parse::<u32>().ok()?;
+>>     if pid == 0 {
+>>         return None;
+>>     }
+>>     let parent_pid = cols[1].parse::<u32>().ok()?;
+>>     let name = cols[2].clone();
+>>     let private_bytes = cols[3].parse::<u64>().ok()?;
+>>
+>>     Some(ProcessSample { pid, parent_pid, name, private_bytes })
+>> }
+>>
+>> pub fn snapshot_contains_pid(snapshot: &[ProcessSample], target_pid: u32) -> bool {
+>>     target_pid != 0 && snapshot.iter().any(|s| s.pid == target_pid)
+>> }
+>>
+>> pub fn aggregate_private_memory_tree(
+>>     root_pid: u32,
+>>     snapshot: &[ProcessSample],
+>> ) -> ProcessTreePrivateMemory {
+>>     let mut visited = HashSet::new();
+>>     let mut queue = VecDeque::new();
+>>     queue.push_back(root_pid);
+>>     visited.insert(root_pid);
+>>
+>>     let mut process_count = 0usize;
+>>     let mut webview2_child_count = 0usize;
+>>     let mut total_private_bytes = 0u64;
+>>     let mut tree_identities = Vec::new();
+>>
+>>     while let Some(current_pid) = queue.pop_front() {
+>>         for node in snapshot {
+>>             if node.pid == current_pid {
+>>                 process_count += 1;
+>>                 total_private_bytes = total_private_bytes.saturating_add(node.private_bytes);
+>>                 tree_identities.push(node.identity());
+>>                 if node.pid != root_pid
+>>                     && node.name.to_ascii_lowercase().contains("msedgewebview2")
+>>                 {
+>>                     webview2_child_count += 1;
+>>                 }
+>>             }
+>>             if node.parent_pid == current_pid && !visited.contains(&node.pid) {
+>>                 visited.insert(node.pid);
+>>                 queue.push_back(node.pid);
+>>             }
+>>         }
+>>     }
+>>
+>>     ProcessTreePrivateMemory {
+>>         root_pid,
+>>         process_count,
+>>         webview2_child_count,
+>>         total_private_bytes,
+>>         tree_identities,
+>>     }
+>> }
+>>
+>> pub fn find_surviving_spawned_identities(
+>>     spawned_identities: &HashSet<ProcessIdentity>,
+>>     post_close_snapshot: &[ProcessSample],
+>> ) -> Vec<ProcessIdentity> {
+>>     let mut surviving = Vec::new();
+>>     for sample in post_close_snapshot {
+>>         let id = sample.identity();
+>>         if spawned_identities.contains(&id) && !surviving.contains(&id) {
+>>             surviving.push(id);
+>>         }
+>>     }
+>>     surviving.sort_by_key(|item| item.pid);
+>>     surviving
+>> }
+>>
+>> pub fn compute_distribution_stats(samples: &[f64]) -> Option<DistributionStats> {
+>>     if samples.is_empty() || samples.iter().any(|v| !v.is_finite()) {
+>>         return None;
+>>     }
+>>     let mut sorted = samples.to_vec();
+>>     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+>>     let len = sorted.len();
+>>     let median_p50 = if len % 2 == 1 {
+>>         sorted[len / 2]
+>>     } else {
+>>         (sorted[(len / 2) - 1] + sorted[len / 2]) / 2.0
+>>     };
+>>     let idx_p95 = ((len as f64 * 0.95).ceil() as usize).saturating_sub(1).min(len - 1);
+>>     Some(DistributionStats {
+>>         sample_count: len,
+>>         min: sorted[0],
+>>         median_p50,
+>>         p95: sorted[idx_p95],
+>>         max: sorted[len - 1],
+>>     })
+>> }
+>>
+>> pub fn verify_report_provenance(rows: &[Step01ReportRow]) -> Result<(), VerificationError> {
+>>     if rows.is_empty() {
+>>         return Err(VerificationError::EmptyReport);
+>>     }
+>>     let mut has_at_least_one_measured_row = false;
+>>
+>>     for row in rows {
+>>         for (is_ram, cell) in [(true, &row.private_ram_mb), (false, &row.latency_ms)] {
+>>             if let MetricCell::Measured {
+>>                 stats,
+>>                 provenance_pid,
+>>                 provenance_present_in_snapshot,
+>>                 min_tree_process_count,
+>>                 os_probe,
+>>             } = cell
+>>             {
+>>                 has_at_least_one_measured_row = true;
+>>                 if stats.sample_count != REQUIRED_REPETITIONS {
+>>                     return Err(VerificationError::InvalidSampleCount {
+>>                         row_label: row.label.clone(),
+>>                         found: stats.sample_count,
+>>                         expected: REQUIRED_REPETITIONS,
+>>                     });
+>>                 }
+>>                 if *provenance_pid == 0 {
+>>                     return Err(VerificationError::ZeroProvenancePid {
+>>                         row_label: row.label.clone(),
+>>                     });
+>>                 }
+>>                 if !*provenance_present_in_snapshot {
+>>                     return Err(VerificationError::ProvenancePidNotInSnapshot {
+>>                         row_label: row.label.clone(),
+>>                         pid: *provenance_pid,
+>>                     });
+>>                 }
+>>                 if *min_tree_process_count < 2 {
+>>                     return Err(VerificationError::TreeMissingDescendant {
+>>                         row_label: row.label.clone(),
+>>                         min_process_count: *min_tree_process_count,
+>>                     });
+>>                 }
+>>                 if os_probe.trim().is_empty() {
+>>                     return Err(VerificationError::EmptyOsProbe {
+>>                         row_label: row.label.clone(),
+>>                     });
+>>                 }
+>>                 if !stats.median_p50.is_finite()
+>>                     || !stats.p95.is_finite()
+>>                     || stats.median_p50 < 0.0
+>>                     || stats.p95 < 0.0
+>>                 {
+>>                     return Err(VerificationError::NonFiniteMeasurement {
+>>                         row_label: row.label.clone(),
+>>                     });
+>>                 }
+>>                 if is_ram && stats.median_p50 <= 0.0 {
+>>                     return Err(VerificationError::ZeroPrivateBytesMeasured {
+>>                         row_label: row.label.clone(),
+>>                     });
+>>                 }
+>>             }
+>>         }
+>>
+>>         if let Some(orphans) = &row.surviving_orphans_after_close {
+>>             if !orphans.is_empty() {
+>>                 return Err(VerificationError::OrphanProcessesRemaining {
+>>                     row_label: row.label.clone(),
+>>                     orphans: orphans.clone(),
+>>                 });
+>>             }
+>>         }
+>>     }
+>>
+>>     if !has_at_least_one_measured_row {
+>>         return Err(VerificationError::EmptyReport);
+>>     }
+>>     Ok(())
+>> }
+>>
+>> pub fn format_metric_cell(cell: &MetricCell, unit: &str) -> String {
+>>     match cell {
+>>         MetricCell::Measured { stats, .. } => format!(
+>>             "p50={:.2} {} / p95={:.2} {} (n={})",
+>>             stats.median_p50, unit, stats.p95, unit, stats.sample_count
+>>         ),
+>>         MetricCell::PendingLocal { reason } => format!("PENDIENTE-LOCAL ({})", reason),
+>>     }
+>> }
+>>
+>> pub fn format_step01_table(rows: &[Step01ReportRow]) -> String {
+>>     let mut out = String::new();
+>>     out.push_str("| Paso | Modo / Prueba (root_pid = hijo lanzado) | Memoria Comprometida Privada `PrivatePageCount` (p50 / p95) | Latencia (p50 / p95) | Huérfanos `(pid, name)` | Estado / Veredicto |\n");
+>>     out.push_str("|---|---|---|---|---|---|\n");
+>>
+>>     for row in rows {
+>>         let ram_str = format_metric_cell(&row.private_ram_mb, "MB");
+>>         let lat_str = format_metric_cell(&row.latency_ms, "ms");
+>>         let orphan_str = match &row.surviving_orphans_after_close {
+>>             Some(list) if list.is_empty() => "0 (OK)".to_string(),
+>>             Some(list) => format!("{} (FALLO: {:?})", list.len(), list),
+>>             None => "PENDIENTE-LOCAL".to_string(),
+>>         };
+>>
+>>         let verdict = match (
+>>             &row.evaluation_kind,
+>>             &row.private_ram_mb,
+>>             &row.latency_ms,
+>>             &row.surviving_orphans_after_close,
+>>         ) {
+>>             (
+>>                 RowEvaluationKind::CalibrationReference,
+>>                 MetricCell::Measured { .. },
+>>                 MetricCell::Measured { .. },
+>>                 Some(list),
+>>             ) if list.is_empty() => STEP_01A_REFERENCE_VERDICT,
+>>             (
+>>                 RowEvaluationKind::ProductModeThreshold,
+>>                 MetricCell::Measured { stats: ram, .. },
+>>                 MetricCell::Measured { stats: lat, .. },
+>>                 Some(list),
+>>             ) if list.is_empty() => {
+>>                 if ram.median_p50 <= MAX_IDLE_PRIVATE_MB
+>>                     && lat.p95 <= MAX_HOVER_TO_VISIBLE_P95_MS
+>>                 {
+>>                     "MEDIDO (CUMPLE <=30 MB y p95<=150 ms)"
+>>                 } else {
+>>                     "MEDIDO (EXCEDE UMBRAL)"
+>>                 }
+>>             }
+>>             _ => "PENDIENTE-LOCAL (Se mide en 0.1b)",
+>>         };
+>>
+>>         out.push_str(&format!(
+>>             "| `{}` | {} | {} | {} | {} | **{}** |\n",
+>>             row.step_id, row.label, ram_str, lat_str, orphan_str, verdict
+>>         ));
+>>     }
+>>
+>>     out
+>> }
+>>
+>> #[cfg(test)]
+>> mod tests {
+>>     use super::*;
+>>
+>>     #[test]
+>>     fn aggregates_child_root_tree_and_identities_with_grandchild() {
+>>         let snapshot = vec![
+>>             ProcessSample { pid: 100, parent_pid: 4, name: "miku-spike-01a.exe".into(), private_bytes: 9 * 1024 * 1024 },
+>>             ProcessSample { pid: 500, parent_pid: 100, name: "cmd.exe".into(), private_bytes: 3 * 1024 * 1024 },
+>>             ProcessSample { pid: 512, parent_pid: 500, name: "PING.EXE".into(), private_bytes: 2 * 1024 * 1024 },
+>>             ProcessSample { pid: 888, parent_pid: 4, name: "explorer.exe".into(), private_bytes: 75 * 1024 * 1024 },
+>>         ];
+>>
+>>         let tree = aggregate_private_memory_tree(500, &snapshot);
+>>         assert_eq!(tree.root_pid, 500);
+>>         assert_eq!(tree.process_count, 2);
+>>         assert_eq!(tree.descendant_count(), 1);
+>>         assert_eq!(tree.total_private_bytes, (3 + 2) * 1024 * 1024);
+>>         assert!(tree.tree_identities.contains(&ProcessIdentity::new(500, "cmd.exe")));
+>>         assert!(tree.tree_identities.contains(&ProcessIdentity::new(512, "ping.exe")));
+>>     }
+>>
+>>     #[test]
+>>     fn detects_orphans_by_composite_identity_and_ignores_recycled_pids() {
+>>         let mut spawned = HashSet::new();
+>>         spawned.insert(ProcessIdentity::new(500, "cmd.exe"));
+>>         spawned.insert(ProcessIdentity::new(512, "ping.exe"));
+>>
+>>         let recycled_snapshot = vec![ProcessSample {
+>>             pid: 512,
+>>             parent_pid: 4,
+>>             name: "svchost.exe".into(),
+>>             private_bytes: 12 * 1024 * 1024,
+>>         }];
+>>         assert!(find_surviving_spawned_identities(&spawned, &recycled_snapshot).is_empty());
+>>
+>>         let leaked_snapshot = vec![ProcessSample {
+>>             pid: 512,
+>>             parent_pid: 1,
+>>             name: "PING.EXE".into(),
+>>             private_bytes: 2 * 1024 * 1024,
+>>         }];
+>>         assert_eq!(
+>>             find_surviving_spawned_identities(&spawned, &leaked_snapshot),
+>>             vec![ProcessIdentity::new(512, "ping.exe")]
+>>         );
+>>     }
+>>
+>>     #[test]
+>>     fn parses_tab_delimited_powershell_lines_with_commas_in_process_name() {
+>>         let line = "\"6040\"\t\"500\"\t\"agent,helper,v2.exe\"\t\"4194304\"";
+>>         let parsed = parse_tsv_process_line(line).expect("must parse TSV row with commas in name");
+>>         assert_eq!(parsed.pid, 6040);
+>>         assert_eq!(parsed.parent_pid, 500);
+>>         assert_eq!(parsed.name, "agent,helper,v2.exe");
+>>         assert_eq!(parsed.private_bytes, 4_194_304);
+>>     }
+>>
+>>     #[test]
+>>     fn verifier_fails_when_pid_missing_in_snapshot_or_process_count_below_two_or_samples_not_20() {
+>>         let valid_stats = DistributionStats {
+>>             sample_count: REQUIRED_REPETITIONS,
+>>             min: 4.0,
+>>             median_p50: 4.5,
+>>             p95: 5.0,
+>>             max: 5.2,
+>>         };
+>>
+>>         let missing_pid_row = vec![Step01ReportRow {
+>>             step_id: "0.1a".into(),
+>>             label: "Árbol del hijo".into(),
+>>             evaluation_kind: RowEvaluationKind::CalibrationReference,
+>>             private_ram_mb: MetricCell::Measured {
+>>                 stats: valid_stats,
+>>                 provenance_pid: 7777,
+>>                 provenance_present_in_snapshot: false,
+>>                 min_tree_process_count: 2,
+>>                 os_probe: "Win32_Process.PrivatePageCount".into(),
+>>             },
+>>             latency_ms: MetricCell::Measured {
+>>                 stats: valid_stats,
+>>                 provenance_pid: 7777,
+>>                 provenance_present_in_snapshot: true,
+>>                 min_tree_process_count: 2,
+>>                 os_probe: "Win32_Process.PrivatePageCount".into(),
+>>             },
+>>             surviving_orphans_after_close: Some(vec![]),
+>>         }];
+>>         assert_eq!(
+>>             verify_report_provenance(&missing_pid_row),
+>>             Err(VerificationError::ProvenancePidNotInSnapshot {
+>>                 row_label: "Árbol del hijo".into(),
+>>                 pid: 7777,
+>>             })
+>>         );
+>>
+>>         let missing_grandchild_row = vec![Step01ReportRow {
+>>             step_id: "0.1a".into(),
+>>             label: "Árbol del hijo".into(),
+>>             evaluation_kind: RowEvaluationKind::CalibrationReference,
+>>             private_ram_mb: MetricCell::Measured {
+>>                 stats: valid_stats,
+>>                 provenance_pid: 7777,
+>>                 provenance_present_in_snapshot: true,
+>>                 min_tree_process_count: 1,
+>>                 os_probe: "Win32_Process.PrivatePageCount".into(),
+>>             },
+>>             latency_ms: MetricCell::Measured {
+>>                 stats: valid_stats,
+>>                 provenance_pid: 7777,
+>>                 provenance_present_in_snapshot: true,
+>>                 min_tree_process_count: 1,
+>>                 os_probe: "Win32_Process.PrivatePageCount".into(),
+>>             },
+>>             surviving_orphans_after_close: Some(vec![]),
+>>         }];
+>>         assert_eq!(
+>>             verify_report_provenance(&missing_grandchild_row),
+>>             Err(VerificationError::TreeMissingDescendant {
+>>                 row_label: "Árbol del hijo".into(),
+>>                 min_process_count: 1,
+>>             })
+>>         );
+>>     }
+>>
+>>     #[test]
+>>     fn labels_01a_without_product_verdict_and_keeps_01b_pending_local_without_numbers() {
+>>         let stats = DistributionStats {
+>>             sample_count: REQUIRED_REPETITIONS,
+>>             min: 4.1,
+>>             median_p50: 4.4,
+>>             p95: 4.8,
+>>             max: 5.0,
+>>         };
+>>         let rows = vec![
+>>             Step01ReportRow {
+>>                 step_id: "0.1a".into(),
+>>                 label: "Árbol del proceso hijo lanzado (cmd.exe + ping.exe)".into(),
+>>                 evaluation_kind: RowEvaluationKind::CalibrationReference,
+>>                 private_ram_mb: MetricCell::Measured {
+>>                     stats,
+>>                     provenance_pid: 500,
+>>                     provenance_present_in_snapshot: true,
+>>                     min_tree_process_count: 2,
+>>                     os_probe: "Win32_Process.PrivatePageCount".into(),
+>>                 },
+>>                 latency_ms: MetricCell::Measured {
+>>                     stats,
+>>                     provenance_pid: 500,
+>>                     provenance_present_in_snapshot: true,
+>>                     min_tree_process_count: 2,
+>>                     os_probe: "Win32_Process.PrivatePageCount".into(),
+>>                 },
+>>                 surviving_orphans_after_close: Some(vec![]),
+>>             },
+>>             Step01ReportRow {
+>>                 step_id: "0.1b-A".into(),
+>>                 label: "Modo A: Pastilla nativa Win32".into(),
+>>                 evaluation_kind: RowEvaluationKind::ProductModeThreshold,
+>>                 private_ram_mb: MetricCell::PendingLocal { reason: "Se mide en 0.1b".into() },
+>>                 latency_ms: MetricCell::PendingLocal { reason: "Se mide en 0.1b".into() },
+>>                 surviving_orphans_after_close: None,
+>>             },
+>>         ];
+>>
+>>         assert!(verify_report_provenance(&rows).is_ok());
+>>         let table = format_step01_table(&rows);
+>>         assert!(table.contains(STEP_01A_REFERENCE_VERDICT));
+>>         assert!(!table.contains("CUMPLE <=30 MB"));
+>>         assert!(table.contains("PENDIENTE-LOCAL (Se mide en 0.1b)"));
+>>     }
+>> }
+>> '@ | Set-Content -Path "src\lib.rs" -Encoding UTF8
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui>
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> # 4. Escribir src/main.rs
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> @'
+>> #![forbid(unsafe_code)]
+>> #![deny(warnings)]
+>>
+>> use miku_spike_01a_proctree::{
+>>     aggregate_private_memory_tree, compute_distribution_stats, find_surviving_spawned_identities,
+>>     format_step01_table, parse_tsv_process_line, snapshot_contains_pid, verify_report_provenance,
+>>     MetricCell, ProcessIdentity, ProcessSample, ProcessTreePrivateMemory, RowEvaluationKind,
+>>     Step01ReportRow, GRANDCHILD_POLL_INTERVAL_MS, GRANDCHILD_POLL_TIMEOUT_MS,
+>>     POST_CLOSE_SETTLE_MS, REQUIRED_REPETITIONS,
+>> };
+>> use std::collections::HashSet;
+>> use std::process::{Child, Command, Stdio};
+>> use std::thread;
+>> use std::time::{Duration, Instant};
+>>
+>> fn query_os_private_memory_snapshot() -> Result<(Vec<ProcessSample>, &'static str), String> {
+>>     let ps = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,PrivatePageCount | ConvertTo-Csv -NoTypeInformation -Delimiter \"`t\"";
+>>     let out = Command::new("powershell")
+>>         .args(["-NoProfile", "-Command", ps])
+>>         .output()
+>>         .map_err(|e| format!("Failed to invoke PowerShell Get-CimInstance: {e}"))?;
+>>     if !out.status.success() {
+>>         return Err(format!("PowerShell exited with status {}", out.status));
+>>     }
+>>     let stdout = String::from_utf8_lossy(&out.stdout);
+>>     let mut samples = Vec::new();
+>>     for line in stdout.lines().skip(1) {
+>>         if let Some(sample) = parse_tsv_process_line(line) {
+>>             samples.push(sample);
+>>         }
+>>     }
+>>     if samples.is_empty() {
+>>         return Err("Win32_Process TSV snapshot returned 0 rows".into());
+>>     }
+>>     Ok((
+>>         samples,
+>>         "Win32_Process.PrivatePageCount (Memoria comprometida privada, TSV)",
+>>     ))
+>> }
+>>
+>> fn spawn_real_child_tree() -> Result<Child, String> {
+>>     Command::new("cmd.exe")
+>>         .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
+>>         .stdin(Stdio::null())
+>>         .stdout(Stdio::null())
+>>         .stderr(Stdio::null())
+>>         .spawn()
+>>         .map_err(|e| format!("Failed to spawn real child process cmd.exe: {e}"))
+>> }
+>>
+>> fn poll_until_grandchild_present(
+>>     child_pid: u32,
+>> ) -> Result<(ProcessTreePrivateMemory, &'static str, bool), String> {
+>>     let deadline = Instant::now() + Duration::from_millis(GRANDCHILD_POLL_TIMEOUT_MS);
+>>     loop {
+>>         let (snapshot, os_probe) = query_os_private_memory_snapshot()?;
+>>         let pid_in_snapshot = snapshot_contains_pid(&snapshot, child_pid);
+>>         let tree = aggregate_private_memory_tree(child_pid, &snapshot);
+>>
+>>         if pid_in_snapshot && tree.descendant_count() >= 1 {
+>>             return Ok((tree, os_probe, pid_in_snapshot));
+>>         }
+>>
+>>         if Instant::now() >= deadline {
+>>             return Err(format!(
+>>                 "Timeout ({} ms) waiting for child_pid={} to spawn grandchild (last process_count={}, pid_in_snapshot={})",
+>>                 GRANDCHILD_POLL_TIMEOUT_MS, child_pid, tree.process_count, pid_in_snapshot
+>>             ));
+>>         }
+>>
+>>         thread::sleep(Duration::from_millis(GRANDCHILD_POLL_INTERVAL_MS));
+>>     }
+>> }
+>>
+>> fn kill_entire_child_tree(child: &mut Child) {
+>>     let child_pid = child.id();
+>>     let _ = Command::new("taskkill")
+>>         .args(["/T", "/F", "/PID", &child_pid.to_string()])
+>>         .stdin(Stdio::null())
+>>         .stdout(Stdio::null())
+>>         .stderr(Stdio::null())
+>>         .status();
+>>     let _ = child.wait();
+>> }
+>>
+>> fn main() {
+>>     let measurer_pid = std::process::id();
+>>     println!("=== MIKU SPIKE 0.1a: CHILD PROCESS TREE PRIVATE MEMORY MEASURER ===");
+>>     println!(
+>>         "Nota metodológica: el árbol medido es explícitamente el del PROCESO HIJO lanzado (root_pid = child.id(), NO el PID del medidor {}).",
+>>         measurer_pid
+>>     );
+>>     println!("Métrica de memoria: Win32_Process.PrivatePageCount = Memoria comprometida privada (Private Bytes / Commit Charge privado), NO WorkingSetSize.");
+>>     println!(
+>>         "Parámetros: {} repeticiones | Polling nieto cada {} ms (timeout {} ms) | Asentamiento post-taskkill = {} ms",
+>>         REQUIRED_REPETITIONS,
+>>         GRANDCHILD_POLL_INTERVAL_MS,
+>>         GRANDCHILD_POLL_TIMEOUT_MS,
+>>         POST_CLOSE_SETTLE_MS
+>>     );
+>>
+>>     let mut private_mb_samples = Vec::with_capacity(REQUIRED_REPETITIONS);
+>>     let mut tree_ready_latency_ms = Vec::with_capacity(REQUIRED_REPETITIONS);
+>>     let mut spawned_identities: HashSet<ProcessIdentity> = HashSet::new();
+>>     let mut all_pids_present_in_snapshot = true;
+>>     let mut min_tree_process_count = usize::MAX;
+>>     let mut last_child_pid = 0u32;
+>>     let mut probe_source = "";
+>>
+>>     for rep in 1..=REQUIRED_REPETITIONS {
+>>         let start = Instant::now();
+>>         let mut child = match spawn_real_child_tree() {
+>>             Ok(c) => c,
+>>             Err(e) => {
+>>                 eprintln!("FATAL [rep {rep}]: {e}");
+>>                 std::process::exit(1);
+>>             }
+>>         };
+>>         let child_pid = child.id();
+>>         last_child_pid = child_pid;
+>>
+>>         let poll_result = poll_until_grandchild_present(child_pid);
+>>         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+>>
+>>         match poll_result {
+>>             Ok((tree, os_probe, pid_in_snapshot)) => {
+>>                 probe_source = os_probe;
+>>                 all_pids_present_in_snapshot &= pid_in_snapshot;
+>>                 if tree.process_count < min_tree_process_count {
+>>                     min_tree_process_count = tree.process_count;
+>>                 }
+>>                 for id in &tree.tree_identities {
+>>                     spawned_identities.insert(id.clone());
+>>                 }
+>>                 private_mb_samples.push(tree.total_private_mb());
+>>                 tree_ready_latency_ms.push(elapsed_ms);
+>>                 kill_entire_child_tree(&mut child);
+>>             }
+>>             Err(e) => {
+>>                 kill_entire_child_tree(&mut child);
+>>                 eprintln!("FATAL [rep {rep}]: {e}");
+>>                 std::process::exit(1);
+>>             }
+>>         }
+>>     }
+>>
+>>     thread::sleep(Duration::from_millis(POST_CLOSE_SETTLE_MS));
+>>
+>>     let (post_close_snapshot, _) = match query_os_private_memory_snapshot() {
+>>         Ok(res) => res,
+>>         Err(e) => {
+>>             eprintln!("FATAL [post-close snapshot]: {e}");
+>>             std::process::exit(1);
+>>         }
+>>     };
+>>
+>>     let surviving_orphans =
+>>         find_surviving_spawned_identities(&spawned_identities, &post_close_snapshot);
+>>
+>>     let Some(ram_stats) = compute_distribution_stats(&private_mb_samples) else {
+>>         eprintln!("FATAL: Failed to compute RAM distribution stats");
+>>         std::process::exit(1);
+>>     };
+>>     let Some(lat_stats) = compute_distribution_stats(&tree_ready_latency_ms) else {
+>>         eprintln!("FATAL: Failed to compute latency distribution stats");
+>>         std::process::exit(1);
+>>     };
+>>
+>>     let rows = vec![
+>>         Step01ReportRow {
+>>             step_id: "0.1a".into(),
+>>             label: format!(
+>>                 "Árbol del hijo lanzado (root_pid=child.id(), min_procs={}, {} reps, {})",
+>>                 min_tree_process_count, REQUIRED_REPETITIONS, probe_source
+>>             ),
+>>             evaluation_kind: RowEvaluationKind::CalibrationReference,
+>>             private_ram_mb: MetricCell::Measured {
+>>                 stats: ram_stats,
+>>                 provenance_pid: last_child_pid,
+>>                 provenance_present_in_snapshot: all_pids_present_in_snapshot,
+>>                 min_tree_process_count,
+>>                 os_probe: probe_source.into(),
+>>             },
+>>             latency_ms: MetricCell::Measured {
+>>                 stats: lat_stats,
+>>                 provenance_pid: last_child_pid,
+>>                 provenance_present_in_snapshot: all_pids_present_in_snapshot,
+>>                 min_tree_process_count,
+>>                 os_probe: probe_source.into(),
+>>             },
+>>             surviving_orphans_after_close: Some(surviving_orphans),
+>>         },
+>>         Step01ReportRow {
+>>             step_id: "0.1b-A".into(),
+>>             label: "Modo A: Pastilla nativa Win32 en reposo (sin WebView2)".into(),
+>>             evaluation_kind: RowEvaluationKind::ProductModeThreshold,
+>>             private_ram_mb: MetricCell::PendingLocal { reason: "Se mide con ventana Win32 real en 0.1b".into() },
+>>             latency_ms: MetricCell::PendingLocal { reason: "Se mide con ventana Win32 real en 0.1b".into() },
+>>             surviving_orphans_after_close: None,
+>>         },
+>>         Step01ReportRow {
+>>             step_id: "0.1b-B".into(),
+>>             label: "Modo B: WebView2 siempre vivo oculto".into(),
+>>             evaluation_kind: RowEvaluationKind::ProductModeThreshold,
+>>             private_ram_mb: MetricCell::PendingLocal { reason: "Se mide con WebView2 real en 0.1b".into() },
+>>             latency_ms: MetricCell::PendingLocal { reason: "Se mide con WebView2 real en 0.1b".into() },
+>>             surviving_orphans_after_close: None,
+>>         },
+>>         Step01ReportRow {
+>>             step_id: "0.1b-C".into(),
+>>             label: "Modo C: WebView2 precalentado con TTL".into(),
+>>             evaluation_kind: RowEvaluationKind::ProductModeThreshold,
+>>             private_ram_mb: MetricCell::PendingLocal { reason: "Se mide con WebView2 real en 0.1b".into() },
+>>             latency_ms: MetricCell::PendingLocal { reason: "Se mide con WebView2 real en 0.1b".into() },
+>>             surviving_orphans_after_close: None,
+>>         },
+>>         Step01ReportRow {
+>>             step_id: "0.1b-D".into(),
+>>             label: "Modo D: WebView2 bajo demanda (crear al expandir / destruir al colapsar)".into(),
+>>             evaluation_kind: RowEvaluationKind::ProductModeThreshold,
+>>             private_ram_mb: MetricCell::PendingLocal { reason: "Se mide con WebView2 real en 0.1b".into() },
+>>             latency_ms: MetricCell::PendingLocal { reason: "Se mide con WebView2 real en 0.1b".into() },
+>>             surviving_orphans_after_close: None,
+>>         },
+>>     ];
+>>
+>>     if let Err(err) = verify_report_provenance(&rows) {
+>>         eprintln!("VERIFIER FAILED: {:?}", err);
+>>         std::process::exit(2);
+>>     }
+>>
+>>     println!("\n{}", format_step01_table(&rows));
+>>     println!(
+>>         "VERIFIER: OK (n={} muestras reales del árbol del hijo con process_count >= 2, PIDs verificados en snapshot, 0 huérfanos tras taskkill /T /F + {} ms de asentamiento; 0.1b en PENDIENTE-LOCAL).",
+>>         REQUIRED_REPETITIONS, POST_CLOSE_SETTLE_MS
+>>     );
+>> }
+>> '@ | Set-Content -Path "src\main.rs" -Encoding UTF8
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui>
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> # 5. Ejecutar los 5 tests unitarios y el medidor en release
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> cargo test
+   Compiling miku-spike-01a-proctree v0.1.0 (C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.73s
+     Running unittests src\lib.rs (target\debug\deps\miku_spike_01a_proctree-00ffb370ff5221bf.exe)
+
+running 5 tests
+test tests::aggregates_child_root_tree_and_identities_with_grandchild ... ok
+test tests::parses_tab_delimited_powershell_lines_with_commas_in_process_name ... ok
+test tests::verifier_fails_when_pid_missing_in_snapshot_or_process_count_below_two_or_samples_not_20 ... ok
+test tests::detects_orphans_by_composite_identity_and_ignores_recycled_pids ... ok
+test tests::labels_01a_without_product_verdict_and_keeps_01b_pending_local_without_numbers ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\miku_spike_01a_proctree-5b3c2dc2fb3e4087.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests miku_spike_01a_proctree
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+PS C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui> cargo run --release
+   Compiling miku-spike-01a-proctree v0.1.0 (C:\Users\cxmluwu\Desktop\prompt-genie\miku\spikes\spike-01-ui)
+    Finished `release` profile [optimized] target(s) in 3.42s
+     Running `target\release\miku-spike-01a-proctree.exe`
+=== MIKU SPIKE 0.1a: CHILD PROCESS TREE PRIVATE MEMORY MEASURER ===
+Nota metodológica: el árbol medido es explícitamente el del PROCESO HIJO lanzado (root_pid = child.id(), NO el PID del medidor 3440).
+Métrica de memoria: Win32_Process.PrivatePageCount = Memoria comprometida privada (Private Bytes / Commit Charge privado), NO WorkingSetSize.
+Parámetros: 20 repeticiones | Polling nieto cada 25 ms (timeout 3000 ms) | Asentamiento post-taskkill = 150 ms
+
+| Paso | Modo / Prueba (root_pid = hijo lanzado) | Memoria Comprometida Privada `PrivatePageCount` (p50 / p95) | Latencia (p50 / p95) | Huérfanos `(pid, name)` | Estado / Veredicto |
+|---|---|---|---|---|---|
+| `0.1a` | Árbol del hijo lanzado (root_pid=child.id(), min_procs=2, 20 reps, Win32_Process.PrivatePageCount (Memoria comprometida privada, TSV)) | p50=7.65 MB / p95=7.71 MB (n=20) | p50=323.12 ms / p95=701.54 ms (n=20) | 0 (OK) | **MEDIDO (referencia de proceso de prueba, sin veredicto de producto)** |
+| `0.1b-A` | Modo A: Pastilla nativa Win32 en reposo (sin WebView2) | PENDIENTE-LOCAL (Se mide con ventana Win32 real en 0.1b) | PENDIENTE-LOCAL (Se mide con ventana Win32 real en 0.1b) | PENDIENTE-LOCAL | **PENDIENTE-LOCAL (Se mide en 0.1b)** |
+| `0.1b-B` | Modo B: WebView2 siempre vivo oculto | PENDIENTE-LOCAL (Se mide con WebView2 real en 0.1b) | PENDIENTE-LOCAL (Se mide con WebView2 real en 0.1b) | PENDIENTE-LOCAL | **PENDIENTE-LOCAL (Se mide en 0.1b)** |
+| `0.1b-C` | Modo C: WebView2 precalentado con TTL | PENDIENTE-LOCAL (Se mide con WebView2 real en 0.1b) | PENDIENTE-LOCAL (Se mide con WebView2 real en 0.1b) | PENDIENTE-LOCAL | **PENDIENTE-LOCAL (Se mide en 0.1b)** |
+| `0.1b-D` | Modo D: WebView2 bajo demanda (crear al expandir / destruir al colapsar) | PENDIENTE-LOCAL (Se mide con WebView2 real en 0.1b) | PENDIENTE-LOCAL (Se mide con WebView2 real en 0.1b) | PENDIENTE-LOCAL | **PENDIENTE-LOCAL (Se mide en 0.1b)** |
+
+VERIFIER: OK (n=20 muestras reales del árbol del hijo con process_count >= 2, PIDs verificados en snapshot, 0 huérfanos tras taskkill /T /F + 150 ms de asentamiento; 0.1b en PENDIENTE-LOCAL).

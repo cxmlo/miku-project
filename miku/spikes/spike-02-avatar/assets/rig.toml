@@ -1,0 +1,83 @@
+# Declarative spring rig and state poses for Miku Island Avatar (Spike 0.2)
+schema_version = 1
+
+[timing]
+max_fps = 60
+sleep_pos_epsilon = 0.0005
+sleep_vel_epsilon = 0.0010
+blink_interval_ms = 4200
+blink_duration_ms = 140
+
+[channels.head_tilt_deg]
+stiffness = 180.0
+damping = 18.0
+initial = 0.0
+min_limit = -25.0
+max_limit = 25.0
+
+[channels.body_bob_px]
+stiffness = 150.0
+damping = 16.0
+initial = 0.0
+min_limit = -16.0
+max_limit = 16.0
+
+[channels.eyelid_open]
+stiffness = 320.0
+damping = 28.0
+initial = 1.0
+min_limit = 0.0
+max_limit = 1.2
+
+[channels.mouth_open]
+stiffness = 260.0
+damping = 22.0
+initial = 0.05
+min_limit = 0.0
+max_limit = 1.0
+
+[channels.twintail_sway_deg]
+stiffness = 140.0
+damping = 14.0
+initial = 0.0
+min_limit = -30.0
+max_limit = 30.0
+
+[channels.glow_pulse]
+stiffness = 200.0
+damping = 20.0
+initial = 0.25
+min_limit = 0.0
+max_limit = 1.0
+
+[poses.idle]
+head_tilt_deg = 0.0
+body_bob_px = 0.0
+eyelid_open = 1.0
+mouth_open = 0.05
+twintail_sway_deg = 0.0
+glow_pulse = 0.25
+
+[poses.thinking]
+head_tilt_deg = -8.5
+body_bob_px = -2.5
+eyelid_open = 0.72
+mouth_open = 0.12
+twintail_sway_deg = -6.0
+glow_pulse = 0.65
+
+[poses.speaking]
+head_tilt_deg = 4.0
+body_bob_px = -4.0
+eyelid_open = 1.0
+mouth_open = 0.78
+twintail_sway_deg = 9.5
+glow_pulse = 0.85
+
+[poses.alert]
+head_tilt_deg = 0.0
+body_bob_px = -6.5
+eyelid_open = 1.15
+mouth_open = 0.45
+twintail_sway_deg = 14.0
+glow_pulse = 1.00

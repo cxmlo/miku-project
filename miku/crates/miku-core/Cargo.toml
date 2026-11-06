@@ -1,0 +1,16 @@
+[package]
+name = "miku-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "miku-core"
+path = "src/main.rs"
+
+[dependencies]
+miku-protocol = { path = "../miku-protocol" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["rt", "sync", "macros", "signal", "time"] }

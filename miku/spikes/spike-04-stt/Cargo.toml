@@ -1,0 +1,16 @@
+[package]
+name = "miku-spike-04-stt"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Spike 0.4: On-demand offline ES/EN STT with SHA-256 verification and TTL RAM recovery"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

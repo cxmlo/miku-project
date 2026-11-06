@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "island": {
+    "pill_width": 220,
+    "pill_height": 36,
+    "expanded_width": 460,
+    "expanded_height": 380,
+    "top_margin_px": 8,
+    "corner_radius_px": 18
+  },
+  "colors": {
+    "surface": "#0B0F17",
+    "surface_elevated": "#111827",
+    "accent": "#22D3EE",
+    "alert": "#F43F5E",
+    "text_primary": "#F8FAFC",
+    "hair_teal": "#39C5BB",
+    "eye_cyan": "#00E5FF"
+  },
+  "motion": {
+    "respect_windows_reduced_motion": true,
+    "hover_expand_delay_ms": 150,
+    "webview_ttl_secs": 30
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Miku Plan Cockpit",
+  "description": "Panel de control arquitectónico en vivo para Miku Desktop Orchestrator: seguimiento de compuertas, fases, Test Ledger, ADRs, presupuestos de rendimiento y contratos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

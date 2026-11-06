@@ -1,0 +1,19 @@
+[package]
+name = "miku-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Miku local persistence layer: deterministic WAL storage, ACID schemas, .miku.toml SHA-256 approval store, and FTS5 BM25 lexical memory search on tokio current_thread"
+
+[[bin]]
+name = "miku-storage"
+path = "src/main.rs"
+
+[dependencies]
+miku-protocol = { path = "../miku-protocol" }
+miku-core = { path = "../miku-core" }
+miku-gatekeeper = { path = "../miku-gatekeeper" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.38", default-features = false, features = ["rt", "sync", "time", "macros"] }

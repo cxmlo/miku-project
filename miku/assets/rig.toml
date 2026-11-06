@@ -1,0 +1,48 @@
+schema_version = 1
+
+[spring]
+stiffness = 180.0
+damping = 18.0
+sleep_pos_epsilon = 0.001
+sleep_vel_epsilon = 0.001
+max_dt_sec = 0.05
+
+[states.idle]
+head_y = 0.0
+head_tilt_deg = 0.0
+twintail_sway_deg = 0.0
+eye_open = 1.0
+mouth_open = 0.0
+glow_alpha = 0.25
+blink_interval_ms = [3200, 6500]
+fps_when_asleep = 0
+
+[states.thinking]
+head_y = -2.5
+head_tilt_deg = 6.0
+twintail_sway_deg = 8.5
+eye_open = 0.85
+mouth_open = 0.10
+glow_alpha = 0.65
+blink_interval_ms = [2800, 5200]
+fps_when_asleep = 0
+
+[states.speaking]
+head_y = -1.5
+head_tilt_deg = -3.0
+twintail_sway_deg = 11.0
+eye_open = 1.0
+mouth_open = 0.65
+glow_alpha = 0.85
+blink_interval_ms = [3000, 5800]
+fps_when_asleep = 0
+
+[states.alert]
+head_y = -4.0
+head_tilt_deg = 0.0
+twintail_sway_deg = 15.0
+eye_open = 1.0
+mouth_open = 0.35
+glow_alpha = 1.0
+blink_interval_ms = [4000, 7000]
+fps_when_asleep = 0

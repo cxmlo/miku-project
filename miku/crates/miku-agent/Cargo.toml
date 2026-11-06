@@ -1,0 +1,19 @@
+[package]
+name = "miku-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "miku-agent"
+path = "src/main.rs"
+
+[dependencies]
+miku-protocol = { path = "../miku-protocol" }
+miku-core = { path = "../miku-core" }
+miku-gateway = { path = "../miku-gateway" }
+miku-gatekeeper = { path = "../miku-gatekeeper" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["net", "io-util", "rt", "sync", "macros", "signal", "time"] }

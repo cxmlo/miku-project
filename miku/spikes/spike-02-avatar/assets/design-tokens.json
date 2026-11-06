@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "canvas": {
+    "logical_width": 180,
+    "logical_height": 180,
+    "corner_radius": 18
+  },
+  "palette": {
+    "surface_bg": "#0B0F17",
+    "surface_border": "#1E293B",
+    "hair_primary": "#00D9C0",
+    "hair_shadow": "#008B7D",
+    "hair_highlight": "#7CEEE1",
+    "skin_base": "#FFE9DC",
+    "skin_blush": "#FF8FA3",
+    "eye_sclera": "#F8FAFC",
+    "eye_iris": "#06B6D4",
+    "eye_pupil": "#0F172A",
+    "tie_accent": "#FF2A85",
+    "headset_frame": "#1E293B",
+    "state_idle_halo": "#22D3EE",
+    "state_thinking_halo": "#F59E0B",
+    "state_speaking_halo": "#10B981",
+    "state_alert_halo": "#EF4444"
+  },
+  "geometry": {
+    "head_radius": 38.0,
+    "eye_offset_x": 14.5,
+    "eye_offset_y": 3.0,
+    "eye_radius_x": 6.5,
+    "eye_radius_y": 8.2,
+    "twintail_length": 68.0,
+    "halo_base_radius": 58.0
+  }
+}

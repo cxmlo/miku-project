@@ -1,0 +1,33 @@
+[package]
+name = "miku-spike-03-wakeword"
+version = "0.1.0"
+edition = "2021"
+description = "Spike 0.3: Offline Wake Word ('Hey Miku') in Rust with O(1) VAD gate, 8-band Goertzel+DTW matcher, GetProcessTimes CPU audit, and WASAPI handle hygiene"
+license = "MIT"
+
+[lib]
+name = "miku_spike_03_wakeword"
+path = "src/lib.rs"
+
+[[bin]]
+name = "miku-spike-03-wakeword"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Com",
+    "Win32_System_Power",
+    "Win32_Media_Audio",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

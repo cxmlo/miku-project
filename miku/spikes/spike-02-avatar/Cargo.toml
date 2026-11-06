@@ -1,0 +1,35 @@
+[package]
+name = "miku-spike-02-avatar"
+version = "0.1.0"
+edition = "2021"
+description = "Spike 0.2: Procedural HTML5 Canvas 2D Avatar with sleeping springs (rig.toml + design-tokens.json) and 0 fps idle audit on WebView2 Mode C"
+license = "MIT"
+
+[lib]
+name = "miku_spike_02_avatar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "miku-spike-02-avatar"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+] }
+webview2-com = "0.33"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
