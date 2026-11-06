@@ -1,6 +1,0 @@
-{
-  "summary": "Plan de implementación TDD para el Micro-paso 1.7 (miku-platform: Registro de inicio automático con Windows en HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run con backend simulado/sandboxed en tests, arranque silencioso en segundo plano --background / --headless con CREATE_NO_WINDOW y benchmark de inicio en frío < 1.0 s [< 100 ms hasta socket WS listo]). Incluye cierre auditado de 1.6 (14/57 = 24.6% global, 6/9 = 66.7% Fase 1), ficha técnica de 1.7, arquitectura del crate miku-platform, definición de los 5 tests del Test Ledger (LEDGER-1.7-1 a LEDGER-1.7-5) y directivas preventivas de higiene en Windows.",
-  "updatedAt": "2026-11-05T22:31:47.707172300Z",
-  "requestFeedback": true,
-  "userFacing": true
-}

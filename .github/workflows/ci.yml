@@ -42,11 +42,11 @@ jobs:
       - name: Run cargo clippy across all workspace targets with zero warnings
         run: cargo clippy --manifest-path miku/Cargo.toml --all-targets -- -D warnings
 
-      - name: Run full workspace TDD test suite (all 9 crates)
+      - name: Run full workspace TDD test suite (all 10 crates)
         run: cargo test --manifest-path miku/Cargo.toml --workspace
 
       - name: Run miku doctor v0 diagnostic suite
-        run: cargo run --release --manifest-path miku/Cargo.toml -p miku-cli -- doctor --json
+        run: cargo run --release --manifest-path miku/Cargo.toml -p miku-cli --bin miku-cli -- doctor --json
 
       - name: Install and run cargo-audit & cargo-deny license checks
         run: |

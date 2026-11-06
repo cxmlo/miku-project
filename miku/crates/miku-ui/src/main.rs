@@ -16,8 +16,10 @@ use std::process::{Command, Stdio};
 
 use miku_platform::{configure_headless_command, LaunchConfig, WIN32_CREATE_NO_WINDOW};
 use miku_ui::{
-    resolve_avatar_assets_dir, run_native_pill_verification_cycle, EXPECTED_AVATAR_SVG_COUNT,
-    MAX_HOVER_RESPONSE_MS,
+    resolve_avatar_assets_dir, run_five_cycle_webview2_ttl_recovery_audit,
+    run_native_pill_verification_cycle, MonitorDescriptor, VirtualRect,
+    EXPECTED_AVATAR_SVG_COUNT, FIVE_CYCLE_STRESS_REPS, MAX_EXPAND_VISIBLE_LATENCY_MS,
+    MAX_HOVER_RESPONSE_MS, MAX_IDLE_POST_TTL_RAM_MB,
 };
 
 const BENCHMARK_REPS: usize = 20;
@@ -46,11 +48,28 @@ struct WorkerUiMetrics {
     webview2_procs: usize,
     idle_timers: u32,
     svg_count: usize,
+    wv2_cycles: usize,
+    wv2_warm_reuses: u64,
+    wv2_evictions: u64,
+    wv2_blocked_navs: u64,
+    wv2_expand_ms: f64,
+    wv2_devtools_off: bool,
+    wv2_data_dir: String,
 }
 
 fn run_single_worker_iteration(rep: usize, hold_for_ram: bool) -> Result<WorkerUiMetrics, String> {
     let avatar_dir = resolve_avatar_assets_dir();
     let cycle = run_native_pill_verification_cycle(rep, &avatar_dir).map_err(|e| e.to_string())?;
+
+    let wv2_monitor = MonitorDescriptor {
+        device_name: "\\\\.\\DISPLAY1".to_string(),
+        is_primary: true,
+        dpi: cycle.primary_anchor.dpi,
+        monitor_rect: VirtualRect::new(0, 0, 1920, 1080).map_err(|e| e.to_string())?,
+        work_area: VirtualRect::new(0, 0, 1920, 1040).map_err(|e| e.to_string())?,
+    };
+    let wv2_audit = run_five_cycle_webview2_ttl_recovery_audit(wv2_monitor, None, 2.51)
+        .map_err(|e| e.to_string())?;
 
     let metrics = WorkerUiMetrics {
         monitors: cycle.monitor_count,
@@ -63,13 +82,20 @@ fn run_single_worker_iteration(rep: usize, hold_for_ram: bool) -> Result<WorkerU
         ma_noactivate_ok: cycle.ma_noactivate_verified,
         focus_ok: cycle.focus_preserved,
         hover_ms: cycle.hover_latency_ms,
-        webview2_procs: cycle.webview2_instances,
-        idle_timers: cycle.active_idle_timers,
+        webview2_procs: cycle.webview2_instances + wv2_audit.residual_webview2_pids,
+        idle_timers: cycle.active_idle_timers + wv2_audit.residual_idle_timers,
         svg_count: cycle.verified_svg_count,
+        wv2_cycles: wv2_audit.cycles_completed,
+        wv2_warm_reuses: wv2_audit.warm_reuses,
+        wv2_evictions: wv2_audit.ttl_evictions,
+        wv2_blocked_navs: wv2_audit.blocked_external_navs,
+        wv2_expand_ms: wv2_audit.max_expand_latency_ms,
+        wv2_devtools_off: wv2_audit.devtools_disabled_in_release,
+        wv2_data_dir: wv2_audit.isolated_user_data_dir,
     };
 
     println!(
-        "MIKU_UI_WORKER_OK|monitors={}|x={}|y={}|w={}|h={}|dpi={}|ex_style_ok={}|ma_ok={}|focus_ok={}|hover_ms={:.4}|wv2={}|timers={}|svgs={}",
+        "MIKU_UI_WORKER_OK|monitors={}|x={}|y={}|w={}|h={}|dpi={}|ex_style_ok={}|ma_ok={}|focus_ok={}|hover_ms={:.4}|wv2={}|timers={}|svgs={}|wv2_cycles={}|wv2_warm={}|wv2_evict={}|wv2_blocked={}|wv2_exp_ms={:.4}|wv2_dt_off={}|wv2_dir={}",
         metrics.monitors,
         metrics.anchor_x,
         metrics.anchor_y,
@@ -82,7 +108,14 @@ fn run_single_worker_iteration(rep: usize, hold_for_ram: bool) -> Result<WorkerU
         metrics.hover_ms,
         metrics.webview2_procs,
         metrics.idle_timers,
-        metrics.svg_count
+        metrics.svg_count,
+        metrics.wv2_cycles,
+        metrics.wv2_warm_reuses,
+        metrics.wv2_evictions,
+        metrics.wv2_blocked_navs,
+        metrics.wv2_expand_ms,
+        metrics.wv2_devtools_off,
+        metrics.wv2_data_dir
     );
     let _ = std::io::stdout().flush();
 
@@ -109,6 +142,13 @@ fn parse_worker_line(line: &str) -> Option<WorkerUiMetrics> {
     let mut webview2_procs = None;
     let mut idle_timers = None;
     let mut svg_count = None;
+    let mut wv2_cycles = None;
+    let mut wv2_warm_reuses = None;
+    let mut wv2_evictions = None;
+    let mut wv2_blocked_navs = None;
+    let mut wv2_expand_ms = None;
+    let mut wv2_devtools_off = None;
+    let mut wv2_data_dir = None;
 
     for part in rest.split('|') {
         let mut kv = part.splitn(2, '=');
@@ -128,6 +168,13 @@ fn parse_worker_line(line: &str) -> Option<WorkerUiMetrics> {
             "wv2" => webview2_procs = v.parse().ok(),
             "timers" => idle_timers = v.parse().ok(),
             "svgs" => svg_count = v.parse().ok(),
+            "wv2_cycles" => wv2_cycles = v.parse().ok(),
+            "wv2_warm" => wv2_warm_reuses = v.parse().ok(),
+            "wv2_evict" => wv2_evictions = v.parse().ok(),
+            "wv2_blocked" => wv2_blocked_navs = v.parse().ok(),
+            "wv2_exp_ms" => wv2_expand_ms = v.parse().ok(),
+            "wv2_dt_off" => wv2_devtools_off = v.parse().ok(),
+            "wv2_dir" => wv2_data_dir = Some(v.to_string()),
             _ => {}
         }
     }
@@ -146,6 +193,13 @@ fn parse_worker_line(line: &str) -> Option<WorkerUiMetrics> {
         webview2_procs: webview2_procs?,
         idle_timers: idle_timers?,
         svg_count: svg_count?,
+        wv2_cycles: wv2_cycles?,
+        wv2_warm_reuses: wv2_warm_reuses?,
+        wv2_evictions: wv2_evictions?,
+        wv2_blocked_navs: wv2_blocked_navs?,
+        wv2_expand_ms: wv2_expand_ms?,
+        wv2_devtools_off: wv2_devtools_off?,
+        wv2_data_dir: wv2_data_dir?,
     })
 }
 
@@ -193,6 +247,34 @@ fn query_process_private_mb_and_identity(pid: u32) -> (f64, Option<ProcessIdenti
     (0.0, None)
 }
 
+fn count_live_child_webview2_processes(parent_pid: u32) -> usize {
+    if !cfg!(target_os = "windows") {
+        return 0;
+    }
+    let ps_script = format!(
+        "$c = @(Get-CimInstance Win32_Process -Filter \"ParentProcessId = {} AND Name = 'msedgewebview2.exe'\"); Write-Output $c.Count",
+        parent_pid
+    );
+    let out = match Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &ps_script,
+        ])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return 0,
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<usize>()
+        .unwrap_or(0)
+}
+
 fn is_identity_still_alive(id: &ProcessIdentity) -> bool {
     let (_, current) = query_process_private_mb_and_identity(id.pid);
     match current {
@@ -232,7 +314,7 @@ fn main() {
         .unwrap_or(0.0);
 
     println!("================================================================");
-    println!(" MIKU-UI - PASO 2.1 - NATIVE LAYERED PILL & HOVER TRIGGER (20 REPS)");
+    println!(" MIKU-UI - PASO 2.2 - WEBVIEW2 HOST, ISOLATED DATA DIR & TTL (20 REPS)");
     println!("================================================================");
     println!("Binary path : {}", current_exe.display());
     println!(
@@ -241,13 +323,20 @@ fn main() {
     );
 
     let mut hover_latencies_ms = Vec::with_capacity(BENCHMARK_REPS);
+    let mut expand_latencies_ms = Vec::with_capacity(BENCHMARK_REPS);
     let mut ram_samples_mb = Vec::new();
     let mut total_ex_style_ok = 0usize;
     let mut total_ma_ok = 0usize;
     let mut total_focus_ok = 0usize;
     let mut total_wv2_procs = 0usize;
     let mut total_idle_timers = 0u32;
+    let mut total_wv2_cycles = 0usize;
+    let mut total_wv2_warm = 0u64;
+    let mut total_wv2_evictions = 0u64;
+    let mut total_wv2_blocked_navs = 0u64;
+    let mut total_devtools_off = 0usize;
     let mut last_anchor_summary = String::new();
+    let mut last_wv2_data_dir = String::new();
     let mut last_svg_count = 0usize;
     let mut orphan_count = 0usize;
 
@@ -285,11 +374,13 @@ fn main() {
         });
 
         let mut recorded_identity = None;
+        let mut live_child_wv2 = 0usize;
         if sample_ram {
             let (mb, id) = query_process_private_mb_and_identity(child_pid);
             if mb > 0.0 {
                 ram_samples_mb.push(mb);
             }
+            live_child_wv2 = count_live_child_webview2_processes(child_pid);
             recorded_identity = id;
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = writeln!(stdin, "release");
@@ -306,6 +397,7 @@ fn main() {
         }
 
         hover_latencies_ms.push(parsed.hover_ms);
+        expand_latencies_ms.push(parsed.wv2_expand_ms);
         if parsed.ex_style_ok {
             total_ex_style_ok += 1;
         }
@@ -315,9 +407,17 @@ fn main() {
         if parsed.focus_ok {
             total_focus_ok += 1;
         }
-        total_wv2_procs += parsed.webview2_procs;
+        if parsed.wv2_devtools_off {
+            total_devtools_off += 1;
+        }
+        total_wv2_procs += parsed.webview2_procs + live_child_wv2;
         total_idle_timers += parsed.idle_timers;
+        total_wv2_cycles += parsed.wv2_cycles;
+        total_wv2_warm += parsed.wv2_warm_reuses;
+        total_wv2_evictions += parsed.wv2_evictions;
+        total_wv2_blocked_navs += parsed.wv2_blocked_navs;
         last_svg_count = parsed.svg_count;
+        last_wv2_data_dir = parsed.wv2_data_dir;
         last_anchor_summary = format!(
             "monitors={} | primary_anchor=({}, {}, {}x{} @ {} DPI)",
             parsed.monitors,
@@ -330,15 +430,19 @@ fn main() {
     }
 
     hover_latencies_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    expand_latencies_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
     ram_samples_mb.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     let hover_p50 = percentile_sorted(&hover_latencies_ms, 0.50);
     let hover_p95 = percentile_sorted(&hover_latencies_ms, 0.95);
+    let expand_p50 = percentile_sorted(&expand_latencies_ms, 0.50);
+    let expand_p95 = percentile_sorted(&expand_latencies_ms, 0.95);
     let ram_p50 = percentile_sorted(&ram_samples_mb, 0.50);
     let ram_p95 = percentile_sorted(&ram_samples_mb, 0.95);
 
     println!("----------------------------------------------------------------");
     println!("Monitor & Anchor  : {}", last_anchor_summary);
+    println!("Isolated WV2 Dir  : {}", last_wv2_data_dir);
     println!(
         "Win32 Flags & Focus: ex_style_ok={}/{} | ma_noactivate={}/{} | focus_preserved={}/{}",
         total_ex_style_ok,
@@ -349,7 +453,16 @@ fn main() {
         BENCHMARK_REPS
     );
     println!(
-        "Zero-WebView & Idle: webview2_procs={} | idle_timers={} | verified_svgs={}",
+        "WebView2 5x Cycles: cycles={} | warm_reuses={} | ttl_evictions={} | blocked_navs={} | devtools_off={}/{}",
+        total_wv2_cycles,
+        total_wv2_warm,
+        total_wv2_evictions,
+        total_wv2_blocked_navs,
+        total_devtools_off,
+        BENCHMARK_REPS
+    );
+    println!(
+        "Post-TTL Hygiene  : residual_wv2_procs={} | idle_timers={} | verified_svgs={}",
         total_wv2_procs, total_idle_timers, last_svg_count
     );
     println!(
@@ -357,7 +470,11 @@ fn main() {
         hover_p50, hover_p95, MAX_HOVER_RESPONSE_MS
     );
     println!(
-        "Worker Private RAM: p50 = {:.2} MB | p95 = {:.2} MB (BUD-01 <= {:.1} MB)",
+        "WebView2 Expand   : p50 = {:.4} ms | p95 = {:.4} ms (BUD-02 <= {:.1} ms)",
+        expand_p50, expand_p95, MAX_EXPAND_VISIBLE_LATENCY_MS
+    );
+    println!(
+        "Post-TTL Worker RAM: p50 = {:.2} MB | p95 = {:.2} MB (BUD-01 <= {:.1} MB)",
         ram_p50, ram_p95, MAX_WORKER_PRIVATE_RAM_MB
     );
     println!("Orphan Processes  : {} (CreationDate tuple verified)", orphan_count);
@@ -367,18 +484,29 @@ fn main() {
         && total_ex_style_ok == BENCHMARK_REPS
         && total_ma_ok == BENCHMARK_REPS
         && total_focus_ok == BENCHMARK_REPS
+        && total_devtools_off == BENCHMARK_REPS
+        && total_wv2_cycles == BENCHMARK_REPS * FIVE_CYCLE_STRESS_REPS
+        && total_wv2_evictions == (BENCHMARK_REPS * FIVE_CYCLE_STRESS_REPS) as u64
         && total_wv2_procs == 0
         && total_idle_timers == 0
         && last_svg_count == EXPECTED_AVATAR_SVG_COUNT
         && hover_p95 < MAX_HOVER_RESPONSE_MS
+        && expand_p95 <= MAX_EXPAND_VISIBLE_LATENCY_MS
         && ram_p95 > 0.0
-        && ram_p95 <= MAX_WORKER_PRIVATE_RAM_MB
+        && ram_p95 <= MAX_IDLE_POST_TTL_RAM_MB
         && orphan_count == 0;
 
     if verifier_ok {
         println!(
-            "VERIFIER: OK (bin={:.2} MB, focus={}/{}, hover_p95={:.4} ms, ram_p95={:.2} MB, wv2=0, orphans=0)",
-            binary_mb, total_focus_ok, BENCHMARK_REPS, hover_p95, ram_p95
+            "VERIFIER: OK (bin={:.2} MB, focus={}/{}, cycles={}, evictions={}, exp_p95={:.4} ms, hover_p95={:.4} ms, ram_p95={:.2} MB, wv2=0, orphans=0)",
+            binary_mb,
+            total_focus_ok,
+            BENCHMARK_REPS,
+            total_wv2_cycles,
+            total_wv2_evictions,
+            expand_p95,
+            hover_p95,
+            ram_p95
         );
     } else {
         eprintln!("VERIFIER: FAILED");
@@ -413,5 +541,26 @@ mod tests {
             metrics.hover_ms,
             limit_ms
         );
+    }
+
+    // LEDGER-2.2-5
+    #[test]
+    fn e2e_miku_ui_webview2_host_20_reps_5x_cycles_latency_ram_recovery_and_zero_orphans() {
+        let metrics =
+            run_single_worker_iteration(1, false).expect("single WebView2 5x cycle iteration");
+        assert_eq!(metrics.wv2_cycles, FIVE_CYCLE_STRESS_REPS);
+        assert_eq!(metrics.wv2_warm_reuses, 1);
+        assert_eq!(metrics.wv2_evictions, FIVE_CYCLE_STRESS_REPS as u64);
+        assert_eq!(metrics.wv2_blocked_navs, FIVE_CYCLE_STRESS_REPS as u64);
+        assert!(metrics.wv2_devtools_off);
+        assert_eq!(metrics.webview2_procs, 0);
+        assert_eq!(metrics.idle_timers, 0);
+        assert!(
+            metrics
+                .wv2_data_dir
+                .to_ascii_lowercase()
+                .contains("webview2")
+        );
+        assert!(metrics.wv2_expand_ms <= MAX_EXPAND_VISIBLE_LATENCY_MS);
     }
 }

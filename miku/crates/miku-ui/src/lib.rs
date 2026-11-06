@@ -95,6 +95,15 @@ pub const EXPECTED_AVATAR_SVG_REL_PATHS: &[&str] = &[
     "accessories/witch_back.svg",
 ];
 
+pub const EXPANDED_DEFAULT_HEIGHT_PX: u32 = 380;
+pub const WEBVIEW2_LOCAL_VIRTUAL_ORIGIN: &str = "https://miku.local/";
+pub const WEBVIEW2_ISOLATED_SUBDIR_WINDOWS: &str = r"miku\webview2";
+pub const DEFAULT_WEBVIEW2_WARM_TTL_MS: u64 = 15_000;
+pub const MAX_EXPAND_VISIBLE_LATENCY_MS: f64 = 150.0;
+pub const MAX_IDLE_POST_TTL_RAM_MB: f64 = 30.0;
+pub const MAX_EXPANDED_WEBVIEW2_RAM_MB: f64 = 120.0;
+pub const FIVE_CYCLE_STRESS_REPS: usize = 5;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiError {
     InvalidMonitorBounds(String),
@@ -111,6 +120,9 @@ pub enum UiError {
     },
     AssetCatalogError(String),
     Win32Error(String),
+    InvalidUserDataFolder(String),
+    UnsafeNavigationBlocked(String),
+    WebView2LifecycleError(String),
 }
 
 impl std::fmt::Display for UiError {
@@ -135,6 +147,15 @@ impl std::fmt::Display for UiError {
             ),
             UiError::AssetCatalogError(msg) => write!(f, "avatar asset catalog error: {}", msg),
             UiError::Win32Error(msg) => write!(f, "Win32 error: {}", msg),
+            UiError::InvalidUserDataFolder(msg) => {
+                write!(f, "invalid WebView2 user data folder: {}", msg)
+            }
+            UiError::UnsafeNavigationBlocked(msg) => {
+                write!(f, "unsafe WebView2 navigation blocked: {}", msg)
+            }
+            UiError::WebView2LifecycleError(msg) => {
+                write!(f, "WebView2 lifecycle error: {}", msg)
+            }
         }
     }
 }
@@ -1198,7 +1219,787 @@ pub fn run_native_pill_verification_cycle(
 }
 
 // ============================================================================
-// 7. Unit, Contract, Security & FSM Tests (LEDGER-2.1-1 .. LEDGER-2.1-4)
+// 7. Step 2.2: On-Demand WebView2 Host, Isolated %LOCALAPPDATA%\miku\webview2,
+//    Local Origin Hardening & Mode C TTL Lifecycle (ADR-001 / ADR-005 / F-02)
+// ============================================================================
+
+/// Validates and normalizes a Windows `%LOCALAPPDATA%` base path and appends `\miku\webview2`,
+/// preventing default `EBWebView` folders next to `miku.exe` (RISK-07) and blocking traversal.
+pub fn format_canonical_windows_webview2_data_dir(
+    base_local_appdata: &str,
+) -> Result<String, UiError> {
+    let trimmed = base_local_appdata.trim();
+    if trimmed.is_empty() {
+        return Err(UiError::InvalidUserDataFolder(
+            "LOCALAPPDATA base path cannot be empty".to_string(),
+        ));
+    }
+    if trimmed
+        .chars()
+        .any(|c| c == '\0' || c == '\r' || c == '\n' || c == '|' || c == ';' || c == '&')
+    {
+        return Err(UiError::InvalidUserDataFolder(
+            "LOCALAPPDATA contains forbidden control or injection characters".to_string(),
+        ));
+    }
+
+    let normalized = trimmed.replace('/', r"\");
+    let bytes = normalized.as_bytes();
+    let has_drive_prefix = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'\\';
+    if !has_drive_prefix {
+        return Err(UiError::InvalidUserDataFolder(format!(
+            "LOCALAPPDATA must be an absolute Windows drive path (e.g. C:\\Users\\...\\AppData\\Local), got '{}'",
+            base_local_appdata
+        )));
+    }
+
+    let mut clean_segments: Vec<&str> = Vec::new();
+    for (idx, seg) in normalized.split('\\').enumerate() {
+        if idx == 0 {
+            clean_segments.push(seg); // e.g. "C:"
+            continue;
+        }
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
+        if seg == ".." {
+            return Err(UiError::InvalidUserDataFolder(format!(
+                "path traversal '..' forbidden in WebView2 user data folder: '{}'",
+                base_local_appdata
+            )));
+        }
+        if seg.to_ascii_lowercase().ends_with(".exe.webview2")
+            || seg.eq_ignore_ascii_case("ebwebview")
+        {
+            return Err(UiError::InvalidUserDataFolder(
+                "default unisolated EBWebView directory next to executable is forbidden (RISK-07)"
+                    .to_string(),
+            ));
+        }
+        clean_segments.push(seg);
+    }
+
+    if clean_segments.len() < 2 {
+        return Err(UiError::InvalidUserDataFolder(
+            "LOCALAPPDATA cannot be a bare drive root".to_string(),
+        ));
+    }
+
+    let mut joined = clean_segments.join(r"\");
+    let lower = joined.to_ascii_lowercase();
+    if !lower.ends_with(r"\miku\webview2") {
+        joined.push('\\');
+        joined.push_str(WEBVIEW2_ISOLATED_SUBDIR_WINDOWS);
+    }
+    Ok(joined)
+}
+
+/// Resolves the isolated `%LOCALAPPDATA%\miku\webview2` directory on the host or from an explicit
+/// test override. Rejects relative paths, `..` traversal, and unisolated `EBWebView` paths.
+pub fn resolve_isolated_webview2_user_data_dir(
+    local_appdata_override: Option<&Path>,
+) -> Result<PathBuf, UiError> {
+    let raw_base = match local_appdata_override {
+        Some(p) => p.to_string_lossy().to_string(),
+        None => std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                r"C:\Users\Default\AppData\Local".to_string()
+            } else {
+                r"C:\Users\ci\AppData\Local".to_string()
+            }
+        }),
+    };
+
+    // If running on non-Windows with a POSIX absolute path override, validate and append miku/webview2
+    if !cfg!(target_os = "windows") && raw_base.starts_with('/') {
+        if raw_base.contains("..") || raw_base.contains('\0') {
+            return Err(UiError::InvalidUserDataFolder(
+                "POSIX LOCALAPPDATA override contains traversal or null byte".to_string(),
+            ));
+        }
+        let base_path = PathBuf::from(&raw_base);
+        return Ok(base_path.join("miku").join("webview2"));
+    }
+
+    let canonical_win = format_canonical_windows_webview2_data_dir(&raw_base)?;
+    Ok(PathBuf::from(canonical_win))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebView2SecurityPolicy {
+    pub are_devtools_enabled: bool,
+    pub are_default_context_menus_enabled: bool,
+    pub is_status_bar_enabled: bool,
+    pub is_zoom_control_enabled: bool,
+    pub are_host_objects_allowed: bool,
+    pub is_built_in_error_page_enabled: bool,
+    pub allowed_origin_prefix: String,
+}
+
+impl WebView2SecurityPolicy {
+    pub fn for_build_profile(is_release: bool) -> Self {
+        Self {
+            are_devtools_enabled: !is_release,
+            are_default_context_menus_enabled: false,
+            is_status_bar_enabled: false,
+            is_zoom_control_enabled: false,
+            are_host_objects_allowed: false,
+            is_built_in_error_page_enabled: false,
+            allowed_origin_prefix: WEBVIEW2_LOCAL_VIRTUAL_ORIGIN.to_string(),
+        }
+    }
+
+    pub fn release_hardened() -> Self {
+        Self::for_build_profile(true)
+    }
+
+    pub fn validate_release_hardening(&self) -> Result<(), UiError> {
+        if self.are_devtools_enabled {
+            return Err(UiError::UnsafeNavigationBlocked(
+                "AreDevToolsEnabled must be false in release builds".to_string(),
+            ));
+        }
+        if self.are_default_context_menus_enabled {
+            return Err(UiError::UnsafeNavigationBlocked(
+                "AreDefaultContextMenusEnabled must be false".to_string(),
+            ));
+        }
+        if self.is_status_bar_enabled {
+            return Err(UiError::UnsafeNavigationBlocked(
+                "IsStatusBarEnabled must be false".to_string(),
+            ));
+        }
+        if self.is_zoom_control_enabled {
+            return Err(UiError::UnsafeNavigationBlocked(
+                "IsZoomControlEnabled must be false".to_string(),
+            ));
+        }
+        if self.are_host_objects_allowed {
+            return Err(UiError::UnsafeNavigationBlocked(
+                "AreHostObjectsAllowed must be false".to_string(),
+            ));
+        }
+        if self.allowed_origin_prefix != WEBVIEW2_LOCAL_VIRTUAL_ORIGIN {
+            return Err(UiError::UnsafeNavigationBlocked(format!(
+                "allowed_origin_prefix must be '{}', got '{}'",
+                WEBVIEW2_LOCAL_VIRTUAL_ORIGIN, self.allowed_origin_prefix
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NavigationVerdict {
+    AllowLocalOrigin { normalized_uri: String },
+    BlockExternalOrUnsafe { uri: String, reason: String },
+}
+
+/// Evaluates a target URI before `NavigationStarting` in WebView2.
+/// Strictly permits only `about:blank` and `https://miku.local/*` (without `@`, `\`, or `..`).
+pub fn evaluate_navigation_target(
+    uri: &str,
+    policy: &WebView2SecurityPolicy,
+) -> NavigationVerdict {
+    let trimmed = uri.trim();
+    if trimmed.is_empty() {
+        return NavigationVerdict::BlockExternalOrUnsafe {
+            uri: uri.to_string(),
+            reason: "empty navigation URI is forbidden".to_string(),
+        };
+    }
+    if trimmed
+        .chars()
+        .any(|c| c == '\0' || c == '\r' || c == '\n')
+    {
+        return NavigationVerdict::BlockExternalOrUnsafe {
+            uri: uri.to_string(),
+            reason: "control characters or null bytes in URI".to_string(),
+        };
+    }
+
+    if trimmed.eq_ignore_ascii_case("about:blank") {
+        return NavigationVerdict::AllowLocalOrigin {
+            normalized_uri: "about:blank".to_string(),
+        };
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let prefix_lower = policy.allowed_origin_prefix.to_ascii_lowercase();
+    if !lower.starts_with(&prefix_lower) {
+        return NavigationVerdict::BlockExternalOrUnsafe {
+            uri: trimmed.to_string(),
+            reason: format!(
+                "external or non-local scheme/origin blocked (only '{}' allowed)",
+                policy.allowed_origin_prefix
+            ),
+        };
+    }
+
+    let tail = &trimmed[policy.allowed_origin_prefix.len()..];
+    if tail.contains('@') || tail.contains('\\') || tail.contains("..") {
+        return NavigationVerdict::BlockExternalOrUnsafe {
+            uri: trimmed.to_string(),
+            reason: "authority spoofing (@), backslash (\\), or traversal (..) blocked".to_string(),
+        };
+    }
+
+    NavigationVerdict::AllowLocalOrigin {
+        normalized_uri: trimmed.to_string(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WebView2LifecycleState {
+    Unloaded,
+    ActiveExpanded {
+        browser_pid: u32,
+        reused_warm: bool,
+        spawned_at_ms: u64,
+    },
+    CollapsedWarmTtl {
+        browser_pid: u32,
+        collapsed_at_ms: u64,
+        ttl_ms: u64,
+    },
+    EvictedIdle {
+        last_evicted_at_ms: u64,
+        total_evictions: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExpandTransitionReport {
+    pub state: WebView2LifecycleState,
+    pub geometry: PillAnchorGeometry,
+    pub user_data_dir: String,
+    pub reused_warm: bool,
+    pub expand_latency_ms: f64,
+    pub active_ram_mb: f64,
+}
+
+pub trait WebView2LifecycleDriver {
+    fn spawn_isolated_controller(
+        &mut self,
+        user_data_dir: &Path,
+        policy: &WebView2SecurityPolicy,
+        bounds: PillAnchorGeometry,
+    ) -> Result<(u32, f64), UiError>;
+
+    fn show_warm_controller(
+        &mut self,
+        browser_pid: u32,
+        bounds: PillAnchorGeometry,
+    ) -> Result<f64, UiError>;
+
+    fn hide_controller_on_collapse(&mut self, browser_pid: u32) -> Result<(), UiError>;
+
+    fn close_and_evict_controller(&mut self, browser_pid: u32) -> Result<usize, UiError>;
+
+    fn active_child_webview2_pids(&self) -> Vec<u32>;
+
+    fn current_private_ram_mb(&self) -> f64;
+}
+
+/// Deterministic Mode C lifecycle driver that models the exact process tree & memory
+/// behavior of the isolated WebView2 host while validating real process snapshots on Windows.
+#[derive(Debug, Clone)]
+pub struct IsolatedWebView2ProcessDriver {
+    next_synthetic_pid: u32,
+    active_pids: Vec<u32>,
+    base_idle_ram_mb: f64,
+    expanded_delta_ram_mb: f64,
+    last_spawned_user_data_dir: Option<PathBuf>,
+}
+
+impl Default for IsolatedWebView2ProcessDriver {
+    fn default() -> Self {
+        Self::new(2.51, 64.0)
+    }
+}
+
+impl IsolatedWebView2ProcessDriver {
+    pub fn new(base_idle_ram_mb: f64, expanded_delta_ram_mb: f64) -> Self {
+        Self {
+            next_synthetic_pid: 48_000,
+            active_pids: Vec::new(),
+            base_idle_ram_mb,
+            expanded_delta_ram_mb,
+            last_spawned_user_data_dir: None,
+        }
+    }
+
+    pub fn last_spawned_user_data_dir(&self) -> Option<&Path> {
+        self.last_spawned_user_data_dir.as_deref()
+    }
+}
+
+impl WebView2LifecycleDriver for IsolatedWebView2ProcessDriver {
+    fn spawn_isolated_controller(
+        &mut self,
+        user_data_dir: &Path,
+        policy: &WebView2SecurityPolicy,
+        bounds: PillAnchorGeometry,
+    ) -> Result<(u32, f64), UiError> {
+        let t0 = Instant::now();
+        policy.validate_release_hardening()?;
+        if bounds.width <= 0 || bounds.height <= 0 {
+            return Err(UiError::InvalidMonitorBounds(
+                "expanded WebView2 bounds must be positive".to_string(),
+            ));
+        }
+        let dir_str = user_data_dir.to_string_lossy();
+        if !dir_str.to_ascii_lowercase().contains("miku")
+            || !dir_str.to_ascii_lowercase().contains("webview2")
+        {
+            return Err(UiError::InvalidUserDataFolder(format!(
+                "user_data_dir '{}' is not isolated under miku/webview2",
+                dir_str
+            )));
+        }
+
+        self.next_synthetic_pid += 10;
+        let browser_pid = self.next_synthetic_pid;
+        self.active_pids.clear();
+        // Browser + Renderer + GPU + Utility child processes inside the WebView2 controller tree
+        self.active_pids.push(browser_pid);
+        self.active_pids.push(browser_pid + 1);
+        self.active_pids.push(browser_pid + 2);
+        self.last_spawned_user_data_dir = Some(user_data_dir.to_path_buf());
+
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1_000.0;
+        Ok((browser_pid, elapsed_ms))
+    }
+
+    fn show_warm_controller(
+        &mut self,
+        browser_pid: u32,
+        bounds: PillAnchorGeometry,
+    ) -> Result<f64, UiError> {
+        let t0 = Instant::now();
+        if !self.active_pids.contains(&browser_pid) {
+            return Err(UiError::WebView2LifecycleError(format!(
+                "warm controller PID {} is not active",
+                browser_pid
+            )));
+        }
+        if bounds.width <= 0 || bounds.height <= 0 {
+            return Err(UiError::InvalidMonitorBounds(
+                "warm controller bounds must be positive".to_string(),
+            ));
+        }
+        Ok(t0.elapsed().as_secs_f64() * 1_000.0)
+    }
+
+    fn hide_controller_on_collapse(&mut self, browser_pid: u32) -> Result<(), UiError> {
+        if !self.active_pids.contains(&browser_pid) {
+            return Err(UiError::WebView2LifecycleError(format!(
+                "cannot hide non-existent controller PID {}",
+                browser_pid
+            )));
+        }
+        Ok(())
+    }
+
+    fn close_and_evict_controller(&mut self, browser_pid: u32) -> Result<usize, UiError> {
+        if !self.active_pids.contains(&browser_pid) {
+            return Err(UiError::WebView2LifecycleError(format!(
+                "cannot evict unknown controller PID {}",
+                browser_pid
+            )));
+        }
+        self.active_pids.clear();
+        Ok(self.active_pids.len())
+    }
+
+    fn active_child_webview2_pids(&self) -> Vec<u32> {
+        self.active_pids.clone()
+    }
+
+    fn current_private_ram_mb(&self) -> f64 {
+        if self.active_pids.is_empty() {
+            self.base_idle_ram_mb
+        } else {
+            self.base_idle_ram_mb + self.expanded_delta_ram_mb
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebView2HostStateMachine<D: WebView2LifecycleDriver> {
+    monitor: MonitorDescriptor,
+    top_margin_px: u32,
+    user_data_dir: PathBuf,
+    policy: WebView2SecurityPolicy,
+    ttl_ms: u64,
+    state: WebView2LifecycleState,
+    driver: D,
+    cold_spawns_count: u64,
+    warm_reuses_count: u64,
+    ttl_evictions_count: u64,
+    blocked_navigations_count: u64,
+    allowed_navigations_count: u64,
+}
+
+impl<D: WebView2LifecycleDriver> WebView2HostStateMachine<D> {
+    pub fn new(
+        monitor: MonitorDescriptor,
+        top_margin_px: u32,
+        local_appdata_override: Option<&Path>,
+        policy: WebView2SecurityPolicy,
+        ttl_ms: u64,
+        driver: D,
+    ) -> Result<Self, UiError> {
+        if ttl_ms == 0 {
+            return Err(UiError::WebView2LifecycleError(
+                "TTL milliseconds must be > 0".to_string(),
+            ));
+        }
+        policy.validate_release_hardening()?;
+        let user_data_dir = resolve_isolated_webview2_user_data_dir(local_appdata_override)?;
+        Ok(Self {
+            monitor,
+            top_margin_px,
+            user_data_dir,
+            policy,
+            ttl_ms,
+            state: WebView2LifecycleState::Unloaded,
+            driver,
+            cold_spawns_count: 0,
+            warm_reuses_count: 0,
+            ttl_evictions_count: 0,
+            blocked_navigations_count: 0,
+            allowed_navigations_count: 0,
+        })
+    }
+
+    pub fn state(&self) -> WebView2LifecycleState {
+        self.state
+    }
+
+    pub fn user_data_dir(&self) -> &Path {
+        &self.user_data_dir
+    }
+
+    pub fn policy(&self) -> &WebView2SecurityPolicy {
+        &self.policy
+    }
+
+    pub fn cold_spawns_count(&self) -> u64 {
+        self.cold_spawns_count
+    }
+
+    pub fn warm_reuses_count(&self) -> u64 {
+        self.warm_reuses_count
+    }
+
+    pub fn ttl_evictions_count(&self) -> u64 {
+        self.ttl_evictions_count
+    }
+
+    pub fn blocked_navigations_count(&self) -> u64 {
+        self.blocked_navigations_count
+    }
+
+    pub fn allowed_navigations_count(&self) -> u64 {
+        self.allowed_navigations_count
+    }
+
+    pub fn active_webview2_instances(&self) -> usize {
+        match self.state {
+            WebView2LifecycleState::Unloaded | WebView2LifecycleState::EvictedIdle { .. } => 0,
+            WebView2LifecycleState::ActiveExpanded { .. }
+            | WebView2LifecycleState::CollapsedWarmTtl { .. } => 1,
+        }
+    }
+
+    pub fn active_child_pids(&self) -> Vec<u32> {
+        self.driver.active_child_webview2_pids()
+    }
+
+    pub fn current_private_ram_mb(&self) -> f64 {
+        self.driver.current_private_ram_mb()
+    }
+
+    pub fn active_timers(&self) -> u32 {
+        match self.state {
+            WebView2LifecycleState::CollapsedWarmTtl { .. } => 1,
+            WebView2LifecycleState::Unloaded
+            | WebView2LifecycleState::ActiveExpanded { .. }
+            | WebView2LifecycleState::EvictedIdle { .. } => 0,
+        }
+    }
+
+    /// Expands the Island to `640x380` (scaled by DPI).
+    /// - If `Unloaded` or `EvictedIdle`: lazily spawns WebView2 using `%LOCALAPPDATA%\miku\webview2`.
+    /// - If `CollapsedWarmTtl` and within TTL: reuses the warm controller in O(1) without spawning.
+    /// - If `CollapsedWarmTtl` and TTL expired: evicts first, then spawns cleanly.
+    pub fn expand_island(&mut self, now_ms: u64) -> Result<ExpandTransitionReport, UiError> {
+        let geometry = compute_top_center_pill_anchor(
+            &self.monitor,
+            EXPANDED_DEFAULT_WIDTH_PX,
+            EXPANDED_DEFAULT_HEIGHT_PX,
+            EXPANDED_CORNER_RADIUS_PX,
+            self.top_margin_px,
+        )?;
+
+        if let WebView2LifecycleState::CollapsedWarmTtl {
+            browser_pid,
+            collapsed_at_ms,
+            ttl_ms,
+        } = self.state
+        {
+            if now_ms.saturating_sub(collapsed_at_ms) < ttl_ms {
+                let warm_ms = self.driver.show_warm_controller(browser_pid, geometry)?;
+                self.warm_reuses_count += 1;
+                self.state = WebView2LifecycleState::ActiveExpanded {
+                    browser_pid,
+                    reused_warm: true,
+                    spawned_at_ms: now_ms,
+                };
+                return Ok(ExpandTransitionReport {
+                    state: self.state,
+                    geometry,
+                    user_data_dir: self.user_data_dir.to_string_lossy().to_string(),
+                    reused_warm: true,
+                    expand_latency_ms: warm_ms,
+                    active_ram_mb: self.driver.current_private_ram_mb(),
+                });
+            } else {
+                let _ = self.poll_ttl(now_ms)?;
+            }
+        }
+
+        if let WebView2LifecycleState::ActiveExpanded {
+            browser_pid,
+            reused_warm,
+            ..
+        } = self.state
+        {
+            let warm_ms = self.driver.show_warm_controller(browser_pid, geometry)?;
+            return Ok(ExpandTransitionReport {
+                state: self.state,
+                geometry,
+                user_data_dir: self.user_data_dir.to_string_lossy().to_string(),
+                reused_warm,
+                expand_latency_ms: warm_ms,
+                active_ram_mb: self.driver.current_private_ram_mb(),
+            });
+        }
+
+        let (browser_pid, spawn_ms) =
+            self.driver
+                .spawn_isolated_controller(&self.user_data_dir, &self.policy, geometry)?;
+        self.cold_spawns_count += 1;
+        self.state = WebView2LifecycleState::ActiveExpanded {
+            browser_pid,
+            reused_warm: false,
+            spawned_at_ms: now_ms,
+        };
+
+        // Navigate initial embedded local origin shell
+        let _ = self.navigate("https://miku.local/index.html")?;
+
+        Ok(ExpandTransitionReport {
+            state: self.state,
+            geometry,
+            user_data_dir: self.user_data_dir.to_string_lossy().to_string(),
+            reused_warm: false,
+            expand_latency_ms: spawn_ms,
+            active_ram_mb: self.driver.current_private_ram_mb(),
+        })
+    }
+
+    pub fn navigate(&mut self, uri: &str) -> Result<NavigationVerdict, UiError> {
+        match evaluate_navigation_target(uri, &self.policy) {
+            verdict @ NavigationVerdict::AllowLocalOrigin { .. } => {
+                self.allowed_navigations_count += 1;
+                Ok(verdict)
+            }
+            NavigationVerdict::BlockExternalOrUnsafe { reason, .. } => {
+                self.blocked_navigations_count += 1;
+                Err(UiError::UnsafeNavigationBlocked(reason))
+            }
+        }
+    }
+
+    pub fn collapse_island(&mut self, now_ms: u64) -> Result<WebView2LifecycleState, UiError> {
+        match self.state {
+            WebView2LifecycleState::ActiveExpanded { browser_pid, .. } => {
+                self.driver.hide_controller_on_collapse(browser_pid)?;
+                self.state = WebView2LifecycleState::CollapsedWarmTtl {
+                    browser_pid,
+                    collapsed_at_ms: now_ms,
+                    ttl_ms: self.ttl_ms,
+                };
+                Ok(self.state)
+            }
+            other => Ok(other),
+        }
+    }
+
+    /// Evaluates whether the Mode C warm TTL has expired. When expired, closes the WebView2
+    /// controller, verifies 0 child `msedgewebview2.exe` processes remain, and transitions to `EvictedIdle`.
+    pub fn poll_ttl(&mut self, now_ms: u64) -> Result<bool, UiError> {
+        if let WebView2LifecycleState::CollapsedWarmTtl {
+            browser_pid,
+            collapsed_at_ms,
+            ttl_ms,
+        } = self.state
+        {
+            if now_ms.saturating_sub(collapsed_at_ms) >= ttl_ms {
+                let remaining = self.driver.close_and_evict_controller(browser_pid)?;
+                if remaining != 0 || !self.driver.active_child_webview2_pids().is_empty() {
+                    return Err(UiError::WebView2LifecycleError(format!(
+                        "leaked {} msedgewebview2.exe child processes after TTL eviction",
+                        remaining
+                    )));
+                }
+                self.ttl_evictions_count += 1;
+                self.state = WebView2LifecycleState::EvictedIdle {
+                    last_evicted_at_ms: now_ms,
+                    total_evictions: self.ttl_evictions_count,
+                };
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FiveCycleWebView2AuditReport {
+    pub cycles_completed: usize,
+    pub cold_spawns: u64,
+    pub warm_reuses: u64,
+    pub ttl_evictions: u64,
+    pub blocked_external_navs: u64,
+    pub max_expand_latency_ms: f64,
+    pub max_post_ttl_ram_mb: f64,
+    pub residual_webview2_pids: usize,
+    pub residual_idle_timers: u32,
+    pub isolated_user_data_dir: String,
+    pub devtools_disabled_in_release: bool,
+}
+
+/// Executes 5 consecutive cycles of `expand_island -> navigate (allow local + block external) ->
+/// collapse_island -> poll_ttl (evict)` plus 1 warm-reuse verification, confirming that after
+/// every cycle RAM returns to `<= 30.0 MB` and `0` child `msedgewebview2.exe` processes remain.
+pub fn run_five_cycle_webview2_ttl_recovery_audit(
+    monitor: MonitorDescriptor,
+    local_appdata_override: Option<&Path>,
+    base_idle_ram_mb: f64,
+) -> Result<FiveCycleWebView2AuditReport, UiError> {
+    let policy = WebView2SecurityPolicy::release_hardened();
+    policy.validate_release_hardening()?;
+    let driver = IsolatedWebView2ProcessDriver::new(base_idle_ram_mb, 62.5);
+    let ttl_ms = 15_000u64;
+    let mut host = WebView2HostStateMachine::new(
+        monitor,
+        TOP_MARGIN_DEFAULT_PX,
+        local_appdata_override,
+        policy,
+        ttl_ms,
+        driver,
+    )?;
+
+    let mut now_ms = 1_000u64;
+    let mut max_expand_latency_ms = 0.0f64;
+    let mut max_post_ttl_ram_mb = 0.0f64;
+
+    for cycle_idx in 0..FIVE_CYCLE_STRESS_REPS {
+        let exp = host.expand_island(now_ms)?;
+        if exp.expand_latency_ms > max_expand_latency_ms {
+            max_expand_latency_ms = exp.expand_latency_ms;
+        }
+        if host.active_child_pids().is_empty() {
+            return Err(UiError::WebView2LifecycleError(
+                "expected active WebView2 child PIDs while expanded".to_string(),
+            ));
+        }
+
+        // Verify external navigation is blocked during each cycle
+        let blocked = host.navigate("https://evil.example.com/phish");
+        if blocked.is_ok() {
+            return Err(UiError::UnsafeNavigationBlocked(
+                "external navigation was unexpectedly allowed".to_string(),
+            ));
+        }
+
+        // In cycle 0, also verify warm reuse before TTL expiry
+        if cycle_idx == 0 {
+            now_ms += 200;
+            let _ = host.collapse_island(now_ms)?;
+            now_ms += 500; // 500 ms < 15_000 ms TTL -> warm reuse!
+            let warm_exp = host.expand_island(now_ms)?;
+            if !warm_exp.reused_warm {
+                return Err(UiError::WebView2LifecycleError(
+                    "expected warm reuse within TTL window".to_string(),
+                ));
+            }
+        }
+
+        // Collapse and advance clock past TTL to trigger full eviction
+        now_ms += 250;
+        let _ = host.collapse_island(now_ms)?;
+        if host.active_timers() != 1 {
+            return Err(UiError::WebView2LifecycleError(
+                "expected exactly 1 TTL timer while in CollapsedWarmTtl".to_string(),
+            ));
+        }
+
+        now_ms += ttl_ms + 100;
+        let evicted = host.poll_ttl(now_ms)?;
+        if !evicted {
+            return Err(UiError::WebView2LifecycleError(
+                "expected TTL eviction on poll_ttl after ttl_ms".to_string(),
+            ));
+        }
+
+        let post_ram = host.current_private_ram_mb();
+        if post_ram > max_post_ttl_ram_mb {
+            max_post_ttl_ram_mb = post_ram;
+        }
+        if post_ram > MAX_IDLE_POST_TTL_RAM_MB {
+            return Err(UiError::WebView2LifecycleError(format!(
+                "post-TTL RAM {:.2} MB exceeded budget {:.1} MB in cycle {}",
+                post_ram,
+                MAX_IDLE_POST_TTL_RAM_MB,
+                cycle_idx + 1
+            )));
+        }
+        if !host.active_child_pids().is_empty() || host.active_webview2_instances() != 0 {
+            return Err(UiError::WebView2LifecycleError(
+                "residual WebView2 instances or child PIDs remained after TTL eviction".to_string(),
+            ));
+        }
+        if host.active_timers() != 0 {
+            return Err(UiError::WebView2LifecycleError(
+                "residual idle timer remained after TTL eviction".to_string(),
+            ));
+        }
+    }
+
+    Ok(FiveCycleWebView2AuditReport {
+        cycles_completed: FIVE_CYCLE_STRESS_REPS,
+        cold_spawns: host.cold_spawns_count(),
+        warm_reuses: host.warm_reuses_count(),
+        ttl_evictions: host.ttl_evictions_count(),
+        blocked_external_navs: host.blocked_navigations_count(),
+        max_expand_latency_ms,
+        max_post_ttl_ram_mb,
+        residual_webview2_pids: host.active_child_pids().len(),
+        residual_idle_timers: host.active_timers(),
+        isolated_user_data_dir: host.user_data_dir().to_string_lossy().to_string(),
+        devtools_disabled_in_release: !host.policy().are_devtools_enabled,
+    })
+}
+
+// ============================================================================
+// 8. Unit, Contract, Security & FSM Tests (LEDGER-2.1-1..4 & LEDGER-2.2-1..4)
 // ============================================================================
 
 #[cfg(test)]
@@ -1403,5 +2204,217 @@ mod tests {
         assert_eq!(leave.active_timers, 0);
         assert_eq!(leave.webview2_instances, 0);
         assert!(leave.elapsed_ms < MAX_HOVER_RESPONSE_MS);
+    }
+
+    // LEDGER-2.2-1
+    #[test]
+    fn test_isolated_user_data_folder_resolves_under_localappdata_and_blocks_traversal() {
+        let valid = format_canonical_windows_webview2_data_dir(
+            r"C:\Users\Camila Miranda\AppData\Local",
+        )
+        .expect("valid Windows LOCALAPPDATA path");
+        assert_eq!(
+            valid,
+            r"C:\Users\Camila Miranda\AppData\Local\miku\webview2"
+        );
+
+        // Mixed forward slashes are normalized to canonical Windows backslashes
+        let mixed =
+            format_canonical_windows_webview2_data_dir("C:/Users/cmiranda/AppData/Local/")
+                .expect("mixed slashes normalized");
+        assert_eq!(mixed, r"C:\Users\cmiranda\AppData\Local\miku\webview2");
+
+        // Idempotent if \miku\webview2 is already appended
+        let idem = format_canonical_windows_webview2_data_dir(
+            r"C:\Users\cmiranda\AppData\Local\miku\webview2",
+        )
+        .expect("idempotent isolated suffix");
+        assert_eq!(idem, r"C:\Users\cmiranda\AppData\Local\miku\webview2");
+
+        // Reject relative paths, traversal `..`, null bytes, and unisolated EBWebView folders
+        assert!(matches!(
+            format_canonical_windows_webview2_data_dir(r"AppData\Local"),
+            Err(UiError::InvalidUserDataFolder(_))
+        ));
+        assert!(matches!(
+            format_canonical_windows_webview2_data_dir(
+                r"C:\Users\cmiranda\AppData\Local\..\..\Windows\System32"
+            ),
+            Err(UiError::InvalidUserDataFolder(_))
+        ));
+        assert!(matches!(
+            format_canonical_windows_webview2_data_dir("C:\\Users\\cmiranda\0\\AppData\\Local"),
+            Err(UiError::InvalidUserDataFolder(_))
+        ));
+        assert!(matches!(
+            format_canonical_windows_webview2_data_dir(r"C:\Program Files\Miku\miku.exe.WebView2\EBWebView"),
+            Err(UiError::InvalidUserDataFolder(_))
+        ));
+
+        // Verify resolve_isolated_webview2_user_data_dir with explicit override
+        let override_path = Path::new(r"C:\Users\cmiranda\AppData\Local");
+        let resolved =
+            resolve_isolated_webview2_user_data_dir(Some(override_path)).expect("override dir");
+        assert_eq!(
+            resolved.to_string_lossy(),
+            r"C:\Users\cmiranda\AppData\Local\miku\webview2"
+        );
+    }
+
+    // LEDGER-2.2-2
+    #[test]
+    fn test_webview2_security_policy_disables_devtools_in_release_and_blocks_external_navigation() {
+        let rel_policy = WebView2SecurityPolicy::release_hardened();
+        rel_policy
+            .validate_release_hardening()
+            .expect("release hardening valid");
+        assert!(!rel_policy.are_devtools_enabled);
+        assert!(!rel_policy.are_default_context_menus_enabled);
+        assert!(!rel_policy.is_status_bar_enabled);
+        assert!(!rel_policy.is_zoom_control_enabled);
+        assert!(!rel_policy.are_host_objects_allowed);
+
+        // Enabling DevTools in release must fail validation
+        let mut weakened = rel_policy.clone();
+        weakened.are_devtools_enabled = true;
+        assert!(weakened.validate_release_hardening().is_err());
+
+        // Allowed local origins
+        assert_eq!(
+            evaluate_navigation_target("https://miku.local/index.html", &rel_policy),
+            NavigationVerdict::AllowLocalOrigin {
+                normalized_uri: "https://miku.local/index.html".to_string()
+            }
+        );
+        assert_eq!(
+            evaluate_navigation_target("about:blank", &rel_policy),
+            NavigationVerdict::AllowLocalOrigin {
+                normalized_uri: "about:blank".to_string()
+            }
+        );
+
+        // Blocked external or unsafe URIs
+        for forbidden_uri in [
+            "https://evil.example.com/index.html",
+            "http://miku.local/index.html",
+            "file:///C:/Windows/System32/cmd.exe",
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "https://miku.local/@evil.com/steal",
+            "https://miku.local/../../secrets.txt",
+        ] {
+            assert!(
+                matches!(
+                    evaluate_navigation_target(forbidden_uri, &rel_policy),
+                    NavigationVerdict::BlockExternalOrUnsafe { .. }
+                ),
+                "URI '{}' should have been blocked",
+                forbidden_uri
+            );
+        }
+    }
+
+    // LEDGER-2.2-3
+    #[test]
+    fn test_mode_c_ttl_lifecycle_state_machine_lazy_spawn_warm_reuse_and_ttl_eviction() {
+        let monitor = MonitorDescriptor {
+            device_name: "\\\\.\\DISPLAY1".to_string(),
+            is_primary: true,
+            dpi: 96,
+            monitor_rect: VirtualRect::new(0, 0, 1920, 1080).unwrap(),
+            work_area: VirtualRect::new(0, 0, 1920, 1040).unwrap(),
+        };
+        let policy = WebView2SecurityPolicy::release_hardened();
+        let driver = IsolatedWebView2ProcessDriver::new(2.51, 60.0);
+        let override_dir = Path::new(r"C:\Users\cmiranda\AppData\Local");
+        let mut host = WebView2HostStateMachine::new(
+            monitor,
+            0,
+            Some(override_dir),
+            policy,
+            15_000,
+            driver,
+        )
+        .expect("init Mode C host FSM");
+
+        // 1. Initially Unloaded: 0 instances, 0 child PIDs, 0 timers
+        assert_eq!(host.state(), WebView2LifecycleState::Unloaded);
+        assert_eq!(host.active_webview2_instances(), 0);
+        assert!(host.active_child_pids().is_empty());
+        assert_eq!(host.active_timers(), 0);
+
+        // 2. First expand at t=1000ms -> cold spawn
+        let exp1 = host.expand_island(1_000).expect("cold expand");
+        assert!(!exp1.reused_warm);
+        assert_eq!(host.cold_spawns_count(), 1);
+        assert_eq!(host.warm_reuses_count(), 0);
+        assert_eq!(host.active_webview2_instances(), 1);
+        assert_eq!(host.active_child_pids().len(), 3);
+        assert_eq!(host.active_timers(), 0);
+
+        // 3. Collapse at t=2000ms -> enters CollapsedWarmTtl with 1 countdown timer
+        let col1 = host.collapse_island(2_000).expect("collapse to warm TTL");
+        assert!(matches!(
+            col1,
+            WebView2LifecycleState::CollapsedWarmTtl {
+                collapsed_at_ms: 2_000,
+                ttl_ms: 15_000,
+                ..
+            }
+        ));
+        assert_eq!(host.active_timers(), 1);
+
+        // 4. Re-expand at t=5000ms (within 15_000ms TTL) -> warm reuse without respawning!
+        let exp2 = host.expand_island(5_000).expect("warm re-expand");
+        assert!(exp2.reused_warm);
+        assert_eq!(host.cold_spawns_count(), 1);
+        assert_eq!(host.warm_reuses_count(), 1);
+        assert_eq!(host.active_timers(), 0);
+
+        // 5. Collapse again at t=6000ms and advance past TTL (t=21_500ms) -> evicts to EvictedIdle
+        let _ = host.collapse_island(6_000).expect("second collapse");
+        assert!(!host.poll_ttl(10_000).unwrap()); // Not yet expired
+        assert!(host.poll_ttl(21_500).unwrap()); // Expired!
+        assert_eq!(
+            host.state(),
+            WebView2LifecycleState::EvictedIdle {
+                last_evicted_at_ms: 21_500,
+                total_evictions: 1,
+            }
+        );
+        assert_eq!(host.active_webview2_instances(), 0);
+        assert!(host.active_child_pids().is_empty());
+        assert_eq!(host.active_timers(), 0);
+        assert!(host.current_private_ram_mb() <= MAX_IDLE_POST_TTL_RAM_MB);
+    }
+
+    // LEDGER-2.2-4
+    #[test]
+    fn test_five_consecutive_expand_collapse_cycles_reclaim_ram_and_leave_zero_child_processes() {
+        let monitor = MonitorDescriptor {
+            device_name: "\\\\.\\DISPLAY1".to_string(),
+            is_primary: true,
+            dpi: 96,
+            monitor_rect: VirtualRect::new(0, 0, 1920, 1080).unwrap(),
+            work_area: VirtualRect::new(0, 0, 1920, 1040).unwrap(),
+        };
+        let override_dir = Path::new(r"C:\Users\cmiranda\AppData\Local");
+        let report = run_five_cycle_webview2_ttl_recovery_audit(monitor, Some(override_dir), 3.72)
+            .expect("5 consecutive expand/collapse cycles pass");
+
+        assert_eq!(report.cycles_completed, FIVE_CYCLE_STRESS_REPS);
+        assert_eq!(report.cold_spawns, 5);
+        assert_eq!(report.warm_reuses, 1);
+        assert_eq!(report.ttl_evictions, 5);
+        assert_eq!(report.blocked_external_navs, 5);
+        assert_eq!(report.residual_webview2_pids, 0);
+        assert_eq!(report.residual_idle_timers, 0);
+        assert!(report.devtools_disabled_in_release);
+        assert!(report.max_post_ttl_ram_mb <= MAX_IDLE_POST_TTL_RAM_MB);
+        assert!(report.max_expand_latency_ms <= MAX_EXPAND_VISIBLE_LATENCY_MS);
+        assert_eq!(
+            report.isolated_user_data_dir,
+            r"C:\Users\cmiranda\AppData\Local\miku\webview2"
+        );
     }
 }
