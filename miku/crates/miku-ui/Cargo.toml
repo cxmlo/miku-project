@@ -9,6 +9,7 @@ authors.workspace = true
 miku-protocol = { path = "../miku-protocol" }
 miku-core = { path = "../miku-core" }
 miku-platform = { path = "../miku-platform" }
+miku-gatekeeper = { path = "../miku-gatekeeper" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"

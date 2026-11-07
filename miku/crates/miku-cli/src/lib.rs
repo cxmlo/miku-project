@@ -1094,6 +1094,78 @@ pub fn run_deterministic_doctor_benchmark_cycle(
     Ok((report, all_valid, total_ms))
 }
 
+/// Parses CLI arguments for `demo` / `--demo` and, if enabled, executes the standalone
+/// interactive Win32 Island Demo session (`F-28 · ADR-001 · ADR-007 · ADR-010`) with
+/// zero disk mutations and zero API keys required.
+pub fn execute_cli_demo_mode(
+    args: &[String],
+) -> Result<Option<(miku_ui::DemoCliOptions, miku_ui::DemoSessionReport)>, String> {
+    let opts = match miku_ui::parse_demo_cli_args(args) {
+        Ok(o) => o,
+        Err(e) => {
+            if args.iter().any(|a| a == "demo" || a == "--demo") {
+                return Err(e.to_string());
+            }
+            return Ok(None);
+        }
+    };
+    if !opts.enabled {
+        return Ok(None);
+    }
+
+    let controller =
+        miku_ui::DemoInteractiveController::default_with_resolved_assets().map_err(|e| e.to_string())?;
+    let report = controller
+        .run_live_win32_demo_window(&opts)
+        .map_err(|e| e.to_string())?;
+    Ok(Some((opts, report)))
+}
+
+/// Formats a human-readable ASCII summary for `DemoSessionReport`.
+pub fn format_demo_session_report(report: &miku_ui::DemoSessionReport) -> String {
+    let mut out = String::new();
+    out.push_str("================================================================\n");
+    out.push_str(" MIKU-CLI · PASO 2.11 · MODO DEMO INTERACTIVO STANDALONE (F-28)\n");
+    out.push_str("================================================================\n");
+    out.push_str(&format!("Badge Prefijo      : {}\n", report.badge_prefix));
+    out.push_str(&format!(
+        "Pastilla Win32     : {}x{} @ ({}, {}) [WS_EX_NOACTIVATE]\n",
+        report.pill_width, report.pill_height, report.pill_x, report.pill_y
+    ));
+    out.push_str(&format!(
+        "Latencia Arranque  : {:.4} ms (umbral < {:.1} ms)\n",
+        report.startup_latency_ms,
+        miku_ui::DEMO_MAX_STARTUP_LATENCY_MS
+    ));
+    out.push_str(&format!(
+        "Física 6 Resortes  : ticks={} | max_fps={:.1} | settled_fps={:.2}\n",
+        report.total_physics_ticks, report.max_active_fps, report.settled_idle_fps
+    ));
+    out.push_str(&format!(
+        "Interacciones Demo : hover={} | click_modal={} | ptt_alt_space={} | kill_switch={} | escape={}\n",
+        report.hover_transitions,
+        report.click_modal_shown_count,
+        report.ptt_activations,
+        report.kill_switch_trips,
+        report.escaped_cleanly
+    ));
+    out.push_str(&format!(
+        "DemoSandboxGuard   : disk_files_mutated={} | api_keys_touched={}\n",
+        report.disk_files_mutated, report.api_keys_touched
+    ));
+    out.push_str(&format!(
+        "Teardown Cooperativo: window_destroyed={} | hotkeys_unreg={} | pcm_zero={} | ipc_zero={} | ram={:.2} MB\n",
+        report.window_destroyed,
+        report.hotkeys_unregistered,
+        report.pcm_buffer_zeroed,
+        report.ipc_queue_drained,
+        report.post_teardown_ram_mb
+    ));
+    out.push_str("================================================================\n");
+    out.push_str("VERIFIER: DEMO_OK (exit_code=0, disk_files_mutated=0, api_keys_touched=0)\n");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

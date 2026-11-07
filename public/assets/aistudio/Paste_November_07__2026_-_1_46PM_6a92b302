@@ -1,0 +1,2183 @@
+Windows PowerShell 5.1
+Copyright (C) Microsoft Corporation. Todos los derechos reservados.
+
+PS C:\Users\cxmluwu\Downloads\prompt-genie> # 1. Tests de miku-ui (deben pasar 58/58: 47 en lib.rs + 11 en main.rs)
+PS C:\Users\cxmluwu\Downloads\prompt-genie> cargo test --manifest-path miku/Cargo.toml -p miku-ui -- --nocapture
+    Updating crates.io index
+     Locking 32 packages to highest compatible versions
+      Adding toml v0.8.23 (available: v1.2.1+spec-1.1.0)
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling equivalent v1.0.3
+   Compiling windows-link v0.2.1
+   Compiling hashbrown v0.17.1
+   Compiling zmij v1.0.23
+   Compiling serde_json v1.0.154
+   Compiling winnow v0.7.15
+   Compiling toml_write v0.1.2
+   Compiling windows-sys v0.61.2
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling pin-project-lite v0.2.17
+   Compiling bytes v1.12.1
+   Compiling indexmap v2.14.2
+   Compiling syn v3.0.9
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.4
+   Compiling serde_derive v1.0.229
+   Compiling tokio-macros v2.7.2
+   Compiling tokio v1.54.1
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling toml_edit v0.22.27
+   Compiling toml v0.8.23
+   Compiling miku-protocol v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-protocol)
+   Compiling miku-core v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-core)
+   Compiling miku-gateway v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gateway)
+   Compiling miku-gatekeeper v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gatekeeper)
+   Compiling miku-platform v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-platform)
+   Compiling miku-ui v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-ui)
+warning: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+note: the most public imported item is `pub(crate)`
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: reduce the glob import's visibility or increase visibility of imported items
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `self::controller::*`
+  --> crates\miku-ui\src\demo\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the most public imported item is `pub(crate)`
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: reduce the glob import's visibility or increase visibility of imported items
+
+warning: unused import: `self::controller::*`
+  --> crates\miku-ui\src\voice\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: ambiguous glob re-exports
+  --> crates\miku-ui\src\lib.rs:38:9
+   |
+38 | pub use crate::demo::*;
+   |         ^^^^^^^^^^^^^^ the name `controller` in the type namespace is first re-exported here
+...
+41 | pub use crate::voice::*;
+   |         --------------- but the name `controller` in the type namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in this scope
+  --> crates\miku-ui\src\lib.rs:85:20
+   |
+85 |           assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+85 -         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+85 +         assert_eq!(REQUIRED_EX_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in module `crate::win32`
+  --> crates\miku-ui\src\lib.rs:85:59
+   |
+85 |           assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |                                                             ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+85 -         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+85 +         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EX_STYLE);
+   |
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in this scope
+  --> crates\miku-ui\src\lib.rs:86:20
+   |
+86 |           assert_eq!(REQUIRED_EXTENDED_STYLE, 0x0808_0088);
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+86 -         assert_eq!(REQUIRED_EXTENDED_STYLE, 0x0808_0088);
+86 +         assert_eq!(REQUIRED_EX_STYLE, 0x0808_0088);
+   |
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in this scope
+  --> crates\miku-ui\src\lib.rs:88:20
+   |
+88 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, crate::avatar::REQUIRED_SVG_ASSET_COUNT);
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in module `crate::avatar`
+  --> crates\miku-ui\src\lib.rs:88:61
+   |
+88 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, crate::avatar::REQUIRED_SVG_ASSET_COUNT);
+   |                                                             ^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::avatar`
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in this scope
+  --> crates\miku-ui\src\lib.rs:89:20
+   |
+89 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, 22);
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in this scope
+  --> crates\miku-ui\src\lib.rs:91:13
+   |
+91 |             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:85:1
+   |
+85 | pub const DEFAULT_WEBVIEW2_WARM_TTL_MS: u64 = 15_000;
+   | ----------------------------------------------------- similarly named constant `DEFAULT_WEBVIEW2_WARM_TTL_MS` defined here
+   |
+help: a constant with a similar name exists
+   |
+91 -             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+91 +             DEFAULT_WEBVIEW2_WARM_TTL_MS,
+   |
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in module `crate::webview`
+  --> crates\miku-ui\src\lib.rs:92:29
+   |
+92 |             crate::webview::WEBVIEW2_WARM_TTL_DEFAULT_MS
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::webview`
+
+error[E0425]: cannot find value `CONFIRMATION_MODAL_DEFAULT_TTL_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:95:13
+    |
+ 95 |             CONFIRMATION_MODAL_DEFAULT_TTL_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:125:1
+    |
+125 | pub const DEFAULT_CONFIRMATION_MODAL_TTL_MS: u64 = 30_000;
+    | ---------------------------------------------------------- similarly named constant `DEFAULT_CONFIRMATION_MODAL_TTL_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+ 95 -             CONFIRMATION_MODAL_DEFAULT_TTL_MS,
+ 95 +             DEFAULT_CONFIRMATION_MODAL_TTL_MS,
+    |
+
+error[E0425]: cannot find value `CONFIRMATION_MODAL_DEFAULT_TTL_MS` in module `crate::gatekeeper`
+  --> crates\miku-ui\src\lib.rs:96:32
+   |
+96 |             crate::gatekeeper::CONFIRMATION_MODAL_DEFAULT_TTL_MS
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::gatekeeper`
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:99:13
+    |
+ 99 |             MAX_KILL_SWITCH_TRIP_LATENCY_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:148:1
+    |
+148 | pub const MAX_KILL_SWITCH_LATENCY_MS: f64 = 20.0;
+    | ------------------------------------------------- similarly named constant `MAX_KILL_SWITCH_LATENCY_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+ 99 -             MAX_KILL_SWITCH_TRIP_LATENCY_MS,
+ 99 +             MAX_KILL_SWITCH_LATENCY_MS,
+    |
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in module `crate::gatekeeper`
+   --> crates\miku-ui\src\lib.rs:100:32
+    |
+100 |             crate::gatekeeper::MAX_KILL_SWITCH_TRIP_LATENCY_MS
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::gatekeeper`
+
+error[E0425]: cannot find value `DEFAULT_AUDIT_MAX_FILE_BYTES` in this scope
+   --> crates\miku-ui\src\lib.rs:103:13
+    |
+103 |             DEFAULT_AUDIT_MAX_FILE_BYTES,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:129:1
+    |
+129 | pub const DEFAULT_MAX_AUDIT_FILE_BYTES: usize = 5 * 1024 * 1024;
+    | ---------------------------------------------------------------- similarly named constant `DEFAULT_MAX_AUDIT_FILE_BYTES` defined here
+    |
+help: a constant with a similar name exists
+    |
+103 -             DEFAULT_AUDIT_MAX_FILE_BYTES,
+103 +             DEFAULT_MAX_AUDIT_FILE_BYTES,
+    |
+
+error[E0425]: cannot find value `DEFAULT_AUDIT_MAX_FILE_BYTES` in module `crate::audit`
+   --> crates\miku-ui\src\lib.rs:104:27
+    |
+104 |             crate::audit::DEFAULT_AUDIT_MAX_FILE_BYTES
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::audit`
+
+error[E0425]: cannot find value `SOUNDWAVE_BAND_COUNT` in module `crate::voice`
+   --> crates\miku-ui\src\lib.rs:106:56
+    |
+106 |         assert_eq!(SOUNDWAVE_BAND_COUNT, crate::voice::SOUNDWAVE_BAND_COUNT);
+    |                                                        ^^^^^^^^^^^^^^^^^^^^ not found in `crate::voice`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::SOUNDWAVE_BAND_COUNT;
+    |
+help: if you import `SOUNDWAVE_BAND_COUNT`, refer to it directly
+    |
+106 -         assert_eq!(SOUNDWAVE_BAND_COUNT, crate::voice::SOUNDWAVE_BAND_COUNT);
+106 +         assert_eq!(SOUNDWAVE_BAND_COUNT, SOUNDWAVE_BAND_COUNT);
+    |
+
+error[E0425]: cannot find value `DEFAULT_IDLE_SUSPENSION_TTL_MS` in module `crate::power`
+   --> crates\miku-ui\src\lib.rs:109:27
+    |
+109 |             crate::power::DEFAULT_IDLE_SUSPENSION_TTL_MS
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::power`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEFAULT_IDLE_SUSPENSION_TTL_MS;
+    |
+help: if you import `DEFAULT_IDLE_SUSPENSION_TTL_MS`, refer to it directly
+    |
+109 -             crate::power::DEFAULT_IDLE_SUSPENSION_TTL_MS
+109 +             DEFAULT_IDLE_SUSPENSION_TTL_MS
+    |
+
+error[E0425]: cannot find value `DEMO_BADGE_PREFIX` in module `crate::demo`
+   --> crates\miku-ui\src\lib.rs:111:52
+    |
+111 |         assert_eq!(DEMO_BADGE_PREFIX, crate::demo::DEMO_BADGE_PREFIX);
+    |                                                    ^^^^^^^^^^^^^^^^^ not found in `crate::demo`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEMO_BADGE_PREFIX;
+    |
+help: if you import `DEMO_BADGE_PREFIX`, refer to it directly
+    |
+111 -         assert_eq!(DEMO_BADGE_PREFIX, crate::demo::DEMO_BADGE_PREFIX);
+111 +         assert_eq!(DEMO_BADGE_PREFIX, DEMO_BADGE_PREFIX);
+    |
+
+error[E0425]: cannot find value `DEMO_MAX_STARTUP_LATENCY_MS` in module `crate::demo`
+   --> crates\miku-ui\src\lib.rs:114:26
+    |
+114 |             crate::demo::DEMO_MAX_STARTUP_LATENCY_MS
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::demo`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEMO_MAX_STARTUP_LATENCY_MS;
+    |
+help: if you import `DEMO_MAX_STARTUP_LATENCY_MS`, refer to it directly
+    |
+114 -             crate::demo::DEMO_MAX_STARTUP_LATENCY_MS
+114 +             DEMO_MAX_STARTUP_LATENCY_MS
+    |
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:261:13
+    |
+261 |             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:85:1
+    |
+ 85 | pub const DEFAULT_WEBVIEW2_WARM_TTL_MS: u64 = 15_000;
+    | ----------------------------------------------------- similarly named constant `DEFAULT_WEBVIEW2_WARM_TTL_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+261 -             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+261 +             DEFAULT_WEBVIEW2_WARM_TTL_MS,
+    |
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:292:47
+    |
+292 |         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:148:1
+    |
+148 | pub const MAX_KILL_SWITCH_LATENCY_MS: f64 = 20.0;
+    | ------------------------------------------------- similarly named constant `MAX_KILL_SWITCH_LATENCY_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+292 -         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+292 +         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_LATENCY_MS);
+    |
+
+error[E0560]: struct `geometry_and_styles::MonitorDescriptor` has no field named `device_id`
+   --> crates\miku-ui\src\lib.rs:237:13
+    |
+237 |             device_id: "DISPLAY_MODULAR_TEST".to_string(),
+    |             ^^^^^^^^^ `geometry_and_styles::MonitorDescriptor` does not have this field
+    |
+    = note: available fields are: `device_name`, `monitor_rect`
+
+error[E0599]: no associated function or constant named `load_from_dir` found for struct `runtime_hot_reload::ProductionAvatarRuntime` in the current scope
+   --> crates\miku-ui\src\lib.rs:250:54
+    |
+250 |         let mut avatar_rt = ProductionAvatarRuntime::load_from_dir(&avatar_dir).unwrap();
+    |                                                      ^^^^^^^^^^^^^ associated function or constant not found in `runtime_hot_reload::ProductionAvatarRuntime`
+    |
+   ::: crates\miku-ui\src\avatar\runtime_hot_reload.rs:134:1
+    |
+134 | pub struct ProductionAvatarRuntime {
+    | ---------------------------------- associated function or constant `load_from_dir` not found for this struct
+    |
+note: if you're trying to build a new `runtime_hot_reload::ProductionAvatarRuntime`, consider using `runtime_hot_reload::ProductionAvatarRuntime::from_snapshot` which returns `Result<runtime_hot_reload::ProductionAvatarRuntime, constants_and_errors::UiError>`
+   --> crates\miku-ui\src\avatar\runtime_hot_reload.rs:145:5
+    |
+145 | /     pub fn from_snapshot(
+146 | |         snapshot: AvatarPackSnapshot,
+147 | |         base_avatar_dir: &Path,
+148 | |         mood: AvatarMood,
+149 | |         equipped_accessories: Vec<String>,
+150 | |         breath_phase_rad: f64,
+151 | |     ) -> Result<Self, UiError> {
+    | |______________________________^
+
+error[E0061]: this function takes 6 arguments but 4 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:257:24
+    |
+257 |            let mut host = WebView2HostStateMachine::new(
+    |  _________________________^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-
+258 | |/             driver,
+259 | ||             Path::new("C:\\Users\\Modular\\AppData\\Local"),
+    | ||             ----------------------------------------------- unexpected argument #2 of type `&std::path::Path`
+260 | ||             false,
+    | ||             -----
+    | ||_____________|___|
+    | |              |   three arguments of type `geometry_and_styles::MonitorDescriptor`, `u32`, and `std::option::Option<&std::path::Path>` are missing
+    | |              unexpected argument #3 of type `bool`
+261 | |              WEBVIEW2_WARM_TTL_DEFAULT_MS,
+262 | |          )
+    | |__________- argument #5 of type `u64` is missing
+    |
+note: associated function defined here
+   --> crates\miku-ui\src\webview\host_fsm.rs:21:12
+    |
+ 21 |     pub fn new(
+    |            ^^^
+ 22 |         monitor: MonitorDescriptor,
+    |         --------------------------
+ 23 |         top_margin_px: u32,
+    |         ------------------
+ 24 |         local_appdata_override: Option<&Path>,
+    |         -------------------------------------
+ 25 |         policy: WebView2SecurityPolicy,
+ 26 |         ttl_ms: u64,
+    |         -----------
+help: did you mean
+    |
+257 ~         let mut host = WebView2HostStateMachine::new(
+258 +             /* MonitorDescriptor */,
+259 +             /* u32 */,
+260 +             /* Option<&Path> */,
+261 +             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+262 +             /* u64 */,
+263 +             driver,
+264 +         )
+    |
+
+error[E0308]: mismatched types
+   --> crates\miku-ui\src\lib.rs:265:83
+    |
+265 |         let clean = sanitize_for_text_content("<img src=x onerror=alert(1)>Miku", 128);
+    |                     -------------------------                                     ^^^ expected `&str`, found integer
+    |                     |
+    |                     arguments to this function are incorrect
+    |
+note: function defined here
+   --> crates\miku-ui\src\webview\ipc_envelope.rs:142:8
+    |
+142 | pub fn sanitize_for_text_content(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+143 |     element_id: &str,
+144 |     untrusted_text: &str,
+    |     --------------------
+
+error[E0599]: no method named `contains` found for enum `Result<T, E>` in the current scope
+   --> crates\miku-ui\src\lib.rs:266:24
+    |
+266 |         assert!(!clean.contains("<img"));
+    |                        ^^^^^^^^ method not found in `Result<ipc_envelope::WebViewIpcPayloadV1, constants_and_errors::UiError>`
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> crates\miku-ui\src\lib.rs:269:30
+    |
+269 |         let temp_audit_dir = create_unique_isolated_audit_temp_dir("modular_2_12").unwrap();
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^---------------- argument #2 of type `usize` is missing
+    |
+note: function defined here
+   --> crates\miku-ui\src\audit\paths_and_store.rs:127:8
+    |
+127 | pub fn create_unique_isolated_audit_temp_dir(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+128 |     prefix: &str,
+129 |     worker_idx: usize,
+    |     -----------------
+help: provide the argument
+    |
+269 |         let temp_audit_dir = create_unique_isolated_audit_temp_dir("modular_2_12", /* usize */).unwrap();
+    |                                                                                  +++++++++++++
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:274:14
+    |
+274 |             .start_ptt_session(1_000, 0x1111, 0x1111, 0x2222, &mut avatar_rt, &mut bridge)
+    |              ^^^^^^^^^^^^^^^^^ ----- expected `&str`, found integer
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:274:79
+    |
+274 |             .start_ptt_session(1_000, 0x1111, 0x1111, 0x2222, &mut avatar_rt, &mut bridge)
+    |                                                                               ^^^^^^^^^^^
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut Result<ipc_bridge::WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\voice\controller.rs:118:12
+    |
+118 |     pub fn start_ptt_session(
+    |            ^^^^^^^^^^^^^^^^^
+119 |         &mut self,
+120 |         hotkey_pressed: &str,
+    |         --------------------
+...
+125 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+
+error[E0061]: this method takes 4 arguments but 3 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:277:14
+    |
+277 |             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+    |              ^^^^^^^^^^^^^^^^-------------------------------------- argument #4 of type `std::option::Option<&mut ipc_bridge::WebView2IpcBridge>` is missing
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:277:56
+    |
+277 |             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+    |                                                        ^^^^^^^^^^^
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut Result<ipc_bridge::WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\voice\controller.rs:216:12
+    |
+216 |     pub fn ingest_pcm_frame(
+    |            ^^^^^^^^^^^^^^^^
+...
+220 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+221 |         bridge: Option<&mut WebView2IpcBridge>,
+    |         --------------------------------------
+help: provide the argument
+    |
+277 -             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+277 +             .ingest_pcm_frame(&[8_000i16; 320], 1_020, /* &mut ProductionAvatarRuntime */, /* Option<&mut WebView2IpcBridge> */)
+    |
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:282:14
+    |
+282 |             .trip(
+    |              ^^^^
+...
+287 |                 &mut audit_store,
+    |                 ---------------- expected `&mut ProductionAvatarRuntime`, found `&mut PersistentJsonlAuditStore`
+    |
+note: expected `&mut GatekeeperEngine`, found `&mut Result<GatekeeperEngine, JailError>`
+   --> crates\miku-ui\src\lib.rs:285:17
+    |
+285 |                 &mut gk,
+    |                 ^^^^^^^
+    = note: expected mutable reference `&mut GatekeeperEngine`
+               found mutable reference `&mut Result<GatekeeperEngine, JailError>`
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut paths_and_store::PersistentJsonlAuditStore`
+note: expected `&mut WebView2IpcBridge`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:289:17
+    |
+289 |                 &mut bridge,
+    |                 ^^^^^^^^^^^
+    = note: expected mutable reference `&mut WebView2IpcBridge`
+               found mutable reference `&mut Result<WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\gatekeeper\kill_switch_ops_audit.rs:11:12
+    |
+ 11 |     pub fn trip(
+    |            ^^^^
+...
+ 15 |         gatekeeper: &mut GatekeeperEngine,
+    |         ---------------------------------
+ 16 |         voice: &mut VoiceInteractionController,
+ 17 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+ 18 |         audit_store: &mut PersistentJsonlAuditStore,
+ 19 |         bridge: &mut WebView2IpcBridge,
+    |         ------------------------------
+
+error[E0609]: no field `trip_latency_ms` on type `kill_switch_types::KillSwitchTripReport`
+   --> crates\miku-ui\src\lib.rs:292:29
+    |
+292 |         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+    |                             ^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `tripped_at_ms`, `reason`, `reaction_latency_ms`, `revoked_gatekeeper_tickets`, `voice_aborted` ... and 7 others
+
+error[E0599]: no method named `is_zeroed` found for reference `&types_and_buffer::VoicePcmRingBuffer` in the current scope
+   --> crates\miku-ui\src\lib.rs:293:36
+    |
+293 |         assert!(voice.pcm_buffer().is_zeroed());
+    |                                    ^^^^^^^^^ method not found in `&types_and_buffer::VoicePcmRingBuffer`
+
+error[E0061]: this method takes 2 arguments but 4 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:299:14
+    |
+299 |             .begin_cooling_ttl(&mut pill_fsm, &mut host, &mut avatar_rt, 2_000)
+    |              ^^^^^^^^^^^^^^^^^ -------------             -------------- unexpected argument #3
+    |                                |
+    |                                unexpected argument #1 of type `&mut hover_fsm::PillHoverStateMachine`
+    |
+note: method defined here
+   --> crates\miku-ui\src\power\coordinator.rs:226:12
+    |
+226 |     pub fn begin_cooling_ttl<D: WebView2LifecycleDriver>(
+    |            ^^^^^^^^^^^^^^^^^
+help: remove the extra arguments
+    |
+299 -             .begin_cooling_ttl(&mut pill_fsm, &mut host, &mut avatar_rt, 2_000)
+299 +             .begin_cooling_ttl(&mut host2_000)
+    |
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:302:14
+    |
+302 |             .poll_inactivity_ttl(
+    |              ^^^^^^^^^^^^^^^^^^^
+303 |                 5_100,
+304 |                 &mut pill_fsm,
+    |                 ------------- unexpected argument #2 of type `&mut hover_fsm::PillHoverStateMachine`
+...
+307 |                 &mut voice,
+    |                 ---------- expected `&mut WebView2IpcBridge`, found `&mut VoiceInteractionController`
+308 |                 &mut bridge,
+    |                 ----------- argument #6 of type `&std::path::Path` is missing
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:308:17
+    |
+308 |                 &mut bridge,
+    |                 ^^^^^^^^^^^
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut Result<ipc_bridge::WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\power\coordinator.rs:248:12
+    |
+248 |     pub fn poll_inactivity_ttl<D: WebView2LifecycleDriver>(
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+252 |         bridge: &mut WebView2IpcBridge,
+    |         ------------------------------
+253 |         voice: &mut VoiceInteractionController,
+254 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+255 |         avatar_dir: &Path,
+    |         -----------------
+help: did you mean
+    |
+302 ~             .poll_inactivity_ttl(
+303 +                 5_100,
+304 +                 &mut host,
+305 +                 /* &mut WebView2IpcBridge */,
+306 +                 &mut avatar_rt,
+307 +                 /* &mut ProductionAvatarRuntime */,
+308 +                 /* &Path */,
+309 +             )
+    |
+
+error[E0609]: no field `webview2_active_processes` on type `IdleSuspensionTransitionReceipt`
+   --> crates\miku-ui\src\lib.rs:312:25
+    |
+312 |         assert_eq!(susp.webview2_active_processes, 0);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `previous_state`, `new_state`, `transitioned_at_ms`, `webview2_evicted`, `residual_webview2_pids` ... and 8 others
+
+error[E0609]: no field `avatar_fps` on type `IdleSuspensionTransitionReceipt`
+   --> crates\miku-ui\src\lib.rs:313:25
+    |
+313 |         assert_eq!(susp.avatar_fps, 0);
+    |                         ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `previous_state`, `new_state`, `transitioned_at_ms`, `webview2_evicted`, `residual_webview2_pids` ... and 8 others
+
+error[E0061]: this method takes 8 arguments but 9 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:315:14
+    |
+315 |             .wake_on_stimulus(
+    |              ^^^^^^^^^^^^^^^^
+...
+321 |                 &mut pill_fsm,
+    |                 ------------- unexpected argument #6 of type `&mut hover_fsm::PillHoverStateMachine`
+...
+324 |                 &ks,
+    |                 --- expected `&Path`, found `&UiKillSwitchManager`
+    |
+note: method defined here
+   --> crates\miku-ui\src\power\wake_and_bank05.rs:9:12
+    |
+  9 |     pub fn wake_on_stimulus(
+    |            ^^^^^^^^^^^^^^^^
+...
+ 18 |         avatar_dir: &Path,
+    |         -----------------
+help: remove the extra argument
+    |
+320 ~                 0x2222,
+321 |                 &mut avatar_rt,
+322 ~                 /* &Path */,
+    |
+
+error[E0609]: no field `demo_requested` on type `sandbox_and_options::DemoCliOptions`
+   --> crates\miku-ui\src\lib.rs:337:22
+    |
+337 |         assert!(opts.demo_requested);
+    |                      ^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `enabled`, `duration_ms`, `auto_script`, `json_output`
+
+Some errors have detailed explanations: E0061, E0308, E0425, E0560, E0599, E0609.
+For more information about an error, try `rustc --explain E0061`.
+warning: `miku-ui` (lib test) generated 5 warnings (5 duplicates)
+error: could not compile `miku-ui` (lib test) due to 37 previous errors; 5 warnings emitted
+warning: build failed, waiting for other jobs to finish...
+warning: `miku-ui` (lib) generated 5 warnings (run `cargo fix --lib -p miku-ui` to apply 2 suggestions)
+PS C:\Users\cxmluwu\Downloads\prompt-genie>
+PS C:\Users\cxmluwu\Downloads\prompt-genie> # 2. Suite completa del workspace (deben pasar 103/103 tests en los 10 crates)
+PS C:\Users\cxmluwu\Downloads\prompt-genie> cargo test --manifest-path miku/Cargo.toml --workspace
+   Compiling miku-protocol v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-protocol)
+   Compiling miku-core v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-core)
+   Compiling miku-gateway v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gateway)
+   Compiling miku-gatekeeper v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gatekeeper)
+   Compiling miku-platform v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-platform)
+   Compiling miku-storage v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-storage)
+   Compiling miku-ui v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-ui)
+   Compiling miku-agent v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-agent)
+warning: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+note: the most public imported item is `pub(crate)`
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: reduce the glob import's visibility or increase visibility of imported items
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `self::controller::*`
+  --> crates\miku-ui\src\demo\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the most public imported item is `pub(crate)`
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: reduce the glob import's visibility or increase visibility of imported items
+
+warning: unused import: `self::controller::*`
+  --> crates\miku-ui\src\voice\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: ambiguous glob re-exports
+  --> crates\miku-ui\src\lib.rs:38:9
+   |
+38 | pub use crate::demo::*;
+   |         ^^^^^^^^^^^^^^ the name `controller` in the type namespace is first re-exported here
+...
+41 | pub use crate::voice::*;
+   |         --------------- but the name `controller` in the type namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+   Compiling miku-memory v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-memory)
+   Compiling miku-cli v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-cli)
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in this scope
+  --> crates\miku-ui\src\lib.rs:85:20
+   |
+85 |           assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+85 -         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+85 +         assert_eq!(REQUIRED_EX_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in module `crate::win32`
+  --> crates\miku-ui\src\lib.rs:85:59
+   |
+85 |           assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |                                                             ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+85 -         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+85 +         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EX_STYLE);
+   |
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in this scope
+  --> crates\miku-ui\src\lib.rs:86:20
+   |
+86 |           assert_eq!(REQUIRED_EXTENDED_STYLE, 0x0808_0088);
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+86 -         assert_eq!(REQUIRED_EXTENDED_STYLE, 0x0808_0088);
+86 +         assert_eq!(REQUIRED_EX_STYLE, 0x0808_0088);
+   |
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in this scope
+  --> crates\miku-ui\src\lib.rs:88:20
+   |
+88 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, crate::avatar::REQUIRED_SVG_ASSET_COUNT);
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in module `crate::avatar`
+  --> crates\miku-ui\src\lib.rs:88:61
+   |
+88 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, crate::avatar::REQUIRED_SVG_ASSET_COUNT);
+   |                                                             ^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::avatar`
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in this scope
+  --> crates\miku-ui\src\lib.rs:89:20
+   |
+89 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, 22);
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in this scope
+  --> crates\miku-ui\src\lib.rs:91:13
+   |
+91 |             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:85:1
+   |
+85 | pub const DEFAULT_WEBVIEW2_WARM_TTL_MS: u64 = 15_000;
+   | ----------------------------------------------------- similarly named constant `DEFAULT_WEBVIEW2_WARM_TTL_MS` defined here
+   |
+help: a constant with a similar name exists
+   |
+91 -             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+91 +             DEFAULT_WEBVIEW2_WARM_TTL_MS,
+   |
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in module `crate::webview`
+  --> crates\miku-ui\src\lib.rs:92:29
+   |
+92 |             crate::webview::WEBVIEW2_WARM_TTL_DEFAULT_MS
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::webview`
+
+error[E0425]: cannot find value `CONFIRMATION_MODAL_DEFAULT_TTL_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:95:13
+    |
+ 95 |             CONFIRMATION_MODAL_DEFAULT_TTL_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:125:1
+    |
+125 | pub const DEFAULT_CONFIRMATION_MODAL_TTL_MS: u64 = 30_000;
+    | ---------------------------------------------------------- similarly named constant `DEFAULT_CONFIRMATION_MODAL_TTL_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+ 95 -             CONFIRMATION_MODAL_DEFAULT_TTL_MS,
+ 95 +             DEFAULT_CONFIRMATION_MODAL_TTL_MS,
+    |
+
+error[E0425]: cannot find value `CONFIRMATION_MODAL_DEFAULT_TTL_MS` in module `crate::gatekeeper`
+  --> crates\miku-ui\src\lib.rs:96:32
+   |
+96 |             crate::gatekeeper::CONFIRMATION_MODAL_DEFAULT_TTL_MS
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::gatekeeper`
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:99:13
+    |
+ 99 |             MAX_KILL_SWITCH_TRIP_LATENCY_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:148:1
+    |
+148 | pub const MAX_KILL_SWITCH_LATENCY_MS: f64 = 20.0;
+    | ------------------------------------------------- similarly named constant `MAX_KILL_SWITCH_LATENCY_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+ 99 -             MAX_KILL_SWITCH_TRIP_LATENCY_MS,
+ 99 +             MAX_KILL_SWITCH_LATENCY_MS,
+    |
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in module `crate::gatekeeper`
+   --> crates\miku-ui\src\lib.rs:100:32
+    |
+100 |             crate::gatekeeper::MAX_KILL_SWITCH_TRIP_LATENCY_MS
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::gatekeeper`
+
+error[E0425]: cannot find value `DEFAULT_AUDIT_MAX_FILE_BYTES` in this scope
+   --> crates\miku-ui\src\lib.rs:103:13
+    |
+103 |             DEFAULT_AUDIT_MAX_FILE_BYTES,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:129:1
+    |
+129 | pub const DEFAULT_MAX_AUDIT_FILE_BYTES: usize = 5 * 1024 * 1024;
+    | ---------------------------------------------------------------- similarly named constant `DEFAULT_MAX_AUDIT_FILE_BYTES` defined here
+    |
+help: a constant with a similar name exists
+    |
+103 -             DEFAULT_AUDIT_MAX_FILE_BYTES,
+103 +             DEFAULT_MAX_AUDIT_FILE_BYTES,
+    |
+
+error[E0425]: cannot find value `DEFAULT_AUDIT_MAX_FILE_BYTES` in module `crate::audit`
+   --> crates\miku-ui\src\lib.rs:104:27
+    |
+104 |             crate::audit::DEFAULT_AUDIT_MAX_FILE_BYTES
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::audit`
+
+error[E0425]: cannot find value `SOUNDWAVE_BAND_COUNT` in module `crate::voice`
+   --> crates\miku-ui\src\lib.rs:106:56
+    |
+106 |         assert_eq!(SOUNDWAVE_BAND_COUNT, crate::voice::SOUNDWAVE_BAND_COUNT);
+    |                                                        ^^^^^^^^^^^^^^^^^^^^ not found in `crate::voice`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::SOUNDWAVE_BAND_COUNT;
+    |
+help: if you import `SOUNDWAVE_BAND_COUNT`, refer to it directly
+    |
+106 -         assert_eq!(SOUNDWAVE_BAND_COUNT, crate::voice::SOUNDWAVE_BAND_COUNT);
+106 +         assert_eq!(SOUNDWAVE_BAND_COUNT, SOUNDWAVE_BAND_COUNT);
+    |
+
+error[E0425]: cannot find value `DEFAULT_IDLE_SUSPENSION_TTL_MS` in module `crate::power`
+   --> crates\miku-ui\src\lib.rs:109:27
+    |
+109 |             crate::power::DEFAULT_IDLE_SUSPENSION_TTL_MS
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::power`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEFAULT_IDLE_SUSPENSION_TTL_MS;
+    |
+help: if you import `DEFAULT_IDLE_SUSPENSION_TTL_MS`, refer to it directly
+    |
+109 -             crate::power::DEFAULT_IDLE_SUSPENSION_TTL_MS
+109 +             DEFAULT_IDLE_SUSPENSION_TTL_MS
+    |
+
+error[E0425]: cannot find value `DEMO_BADGE_PREFIX` in module `crate::demo`
+   --> crates\miku-ui\src\lib.rs:111:52
+    |
+111 |         assert_eq!(DEMO_BADGE_PREFIX, crate::demo::DEMO_BADGE_PREFIX);
+    |                                                    ^^^^^^^^^^^^^^^^^ not found in `crate::demo`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEMO_BADGE_PREFIX;
+    |
+help: if you import `DEMO_BADGE_PREFIX`, refer to it directly
+    |
+111 -         assert_eq!(DEMO_BADGE_PREFIX, crate::demo::DEMO_BADGE_PREFIX);
+111 +         assert_eq!(DEMO_BADGE_PREFIX, DEMO_BADGE_PREFIX);
+    |
+
+error[E0425]: cannot find value `DEMO_MAX_STARTUP_LATENCY_MS` in module `crate::demo`
+   --> crates\miku-ui\src\lib.rs:114:26
+    |
+114 |             crate::demo::DEMO_MAX_STARTUP_LATENCY_MS
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::demo`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEMO_MAX_STARTUP_LATENCY_MS;
+    |
+help: if you import `DEMO_MAX_STARTUP_LATENCY_MS`, refer to it directly
+    |
+114 -             crate::demo::DEMO_MAX_STARTUP_LATENCY_MS
+114 +             DEMO_MAX_STARTUP_LATENCY_MS
+    |
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:261:13
+    |
+261 |             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:85:1
+    |
+ 85 | pub const DEFAULT_WEBVIEW2_WARM_TTL_MS: u64 = 15_000;
+    | ----------------------------------------------------- similarly named constant `DEFAULT_WEBVIEW2_WARM_TTL_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+261 -             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+261 +             DEFAULT_WEBVIEW2_WARM_TTL_MS,
+    |
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:292:47
+    |
+292 |         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:148:1
+    |
+148 | pub const MAX_KILL_SWITCH_LATENCY_MS: f64 = 20.0;
+    | ------------------------------------------------- similarly named constant `MAX_KILL_SWITCH_LATENCY_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+292 -         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+292 +         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_LATENCY_MS);
+    |
+
+warning: `miku-ui` (lib) generated 5 warnings (run `cargo fix --lib -p miku-ui` to apply 2 suggestions)
+error[E0560]: struct `geometry_and_styles::MonitorDescriptor` has no field named `device_id`
+   --> crates\miku-ui\src\lib.rs:237:13
+    |
+237 |             device_id: "DISPLAY_MODULAR_TEST".to_string(),
+    |             ^^^^^^^^^ `geometry_and_styles::MonitorDescriptor` does not have this field
+    |
+    = note: available fields are: `device_name`, `monitor_rect`
+
+error[E0599]: no associated function or constant named `load_from_dir` found for struct `runtime_hot_reload::ProductionAvatarRuntime` in the current scope
+   --> crates\miku-ui\src\lib.rs:250:54
+    |
+250 |         let mut avatar_rt = ProductionAvatarRuntime::load_from_dir(&avatar_dir).unwrap();
+    |                                                      ^^^^^^^^^^^^^ associated function or constant not found in `runtime_hot_reload::ProductionAvatarRuntime`
+    |
+   ::: crates\miku-ui\src\avatar\runtime_hot_reload.rs:134:1
+    |
+134 | pub struct ProductionAvatarRuntime {
+    | ---------------------------------- associated function or constant `load_from_dir` not found for this struct
+    |
+note: if you're trying to build a new `runtime_hot_reload::ProductionAvatarRuntime`, consider using `runtime_hot_reload::ProductionAvatarRuntime::from_snapshot` which returns `Result<runtime_hot_reload::ProductionAvatarRuntime, constants_and_errors::UiError>`
+   --> crates\miku-ui\src\avatar\runtime_hot_reload.rs:145:5
+    |
+145 | /     pub fn from_snapshot(
+146 | |         snapshot: AvatarPackSnapshot,
+147 | |         base_avatar_dir: &Path,
+148 | |         mood: AvatarMood,
+149 | |         equipped_accessories: Vec<String>,
+150 | |         breath_phase_rad: f64,
+151 | |     ) -> Result<Self, UiError> {
+    | |______________________________^
+
+error[E0061]: this function takes 6 arguments but 4 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:257:24
+    |
+257 |            let mut host = WebView2HostStateMachine::new(
+    |  _________________________^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-
+258 | |/             driver,
+259 | ||             Path::new("C:\\Users\\Modular\\AppData\\Local"),
+    | ||             ----------------------------------------------- unexpected argument #2 of type `&std::path::Path`
+260 | ||             false,
+    | ||             -----
+    | ||_____________|___|
+    | |              |   three arguments of type `geometry_and_styles::MonitorDescriptor`, `u32`, and `std::option::Option<&std::path::Path>` are missing
+    | |              unexpected argument #3 of type `bool`
+261 | |              WEBVIEW2_WARM_TTL_DEFAULT_MS,
+262 | |          )
+    | |__________- argument #5 of type `u64` is missing
+    |
+note: associated function defined here
+   --> crates\miku-ui\src\webview\host_fsm.rs:21:12
+    |
+ 21 |     pub fn new(
+    |            ^^^
+ 22 |         monitor: MonitorDescriptor,
+    |         --------------------------
+ 23 |         top_margin_px: u32,
+    |         ------------------
+ 24 |         local_appdata_override: Option<&Path>,
+    |         -------------------------------------
+ 25 |         policy: WebView2SecurityPolicy,
+ 26 |         ttl_ms: u64,
+    |         -----------
+help: did you mean
+    |
+257 ~         let mut host = WebView2HostStateMachine::new(
+258 +             /* MonitorDescriptor */,
+259 +             /* u32 */,
+260 +             /* Option<&Path> */,
+261 +             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+262 +             /* u64 */,
+263 +             driver,
+264 +         )
+    |
+
+error[E0308]: mismatched types
+   --> crates\miku-ui\src\lib.rs:265:83
+    |
+265 |         let clean = sanitize_for_text_content("<img src=x onerror=alert(1)>Miku", 128);
+    |                     -------------------------                                     ^^^ expected `&str`, found integer
+    |                     |
+    |                     arguments to this function are incorrect
+    |
+note: function defined here
+   --> crates\miku-ui\src\webview\ipc_envelope.rs:142:8
+    |
+142 | pub fn sanitize_for_text_content(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+143 |     element_id: &str,
+144 |     untrusted_text: &str,
+    |     --------------------
+
+error[E0599]: no method named `contains` found for enum `Result<T, E>` in the current scope
+   --> crates\miku-ui\src\lib.rs:266:24
+    |
+266 |         assert!(!clean.contains("<img"));
+    |                        ^^^^^^^^ method not found in `Result<ipc_envelope::WebViewIpcPayloadV1, constants_and_errors::UiError>`
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> crates\miku-ui\src\lib.rs:269:30
+    |
+269 |         let temp_audit_dir = create_unique_isolated_audit_temp_dir("modular_2_12").unwrap();
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^---------------- argument #2 of type `usize` is missing
+    |
+note: function defined here
+   --> crates\miku-ui\src\audit\paths_and_store.rs:127:8
+    |
+127 | pub fn create_unique_isolated_audit_temp_dir(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+128 |     prefix: &str,
+129 |     worker_idx: usize,
+    |     -----------------
+help: provide the argument
+    |
+269 |         let temp_audit_dir = create_unique_isolated_audit_temp_dir("modular_2_12", /* usize */).unwrap();
+    |                                                                                  +++++++++++++
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:274:14
+    |
+274 |             .start_ptt_session(1_000, 0x1111, 0x1111, 0x2222, &mut avatar_rt, &mut bridge)
+    |              ^^^^^^^^^^^^^^^^^ ----- expected `&str`, found integer
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:274:79
+    |
+274 |             .start_ptt_session(1_000, 0x1111, 0x1111, 0x2222, &mut avatar_rt, &mut bridge)
+    |                                                                               ^^^^^^^^^^^
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut Result<ipc_bridge::WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\voice\controller.rs:118:12
+    |
+118 |     pub fn start_ptt_session(
+    |            ^^^^^^^^^^^^^^^^^
+119 |         &mut self,
+120 |         hotkey_pressed: &str,
+    |         --------------------
+...
+125 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+
+error[E0061]: this method takes 4 arguments but 3 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:277:14
+    |
+277 |             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+    |              ^^^^^^^^^^^^^^^^-------------------------------------- argument #4 of type `std::option::Option<&mut ipc_bridge::WebView2IpcBridge>` is missing
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:277:56
+    |
+277 |             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+    |                                                        ^^^^^^^^^^^
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut Result<ipc_bridge::WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\voice\controller.rs:216:12
+    |
+216 |     pub fn ingest_pcm_frame(
+    |            ^^^^^^^^^^^^^^^^
+...
+220 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+221 |         bridge: Option<&mut WebView2IpcBridge>,
+    |         --------------------------------------
+help: provide the argument
+    |
+277 -             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+277 +             .ingest_pcm_frame(&[8_000i16; 320], 1_020, /* &mut ProductionAvatarRuntime */, /* Option<&mut WebView2IpcBridge> */)
+    |
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:282:14
+    |
+282 |             .trip(
+    |              ^^^^
+...
+287 |                 &mut audit_store,
+    |                 ---------------- expected `&mut ProductionAvatarRuntime`, found `&mut PersistentJsonlAuditStore`
+    |
+note: expected `&mut GatekeeperEngine`, found `&mut Result<GatekeeperEngine, JailError>`
+   --> crates\miku-ui\src\lib.rs:285:17
+    |
+285 |                 &mut gk,
+    |                 ^^^^^^^
+    = note: expected mutable reference `&mut GatekeeperEngine`
+               found mutable reference `&mut Result<GatekeeperEngine, JailError>`
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut paths_and_store::PersistentJsonlAuditStore`
+note: expected `&mut WebView2IpcBridge`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:289:17
+    |
+289 |                 &mut bridge,
+    |                 ^^^^^^^^^^^
+    = note: expected mutable reference `&mut WebView2IpcBridge`
+               found mutable reference `&mut Result<WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\gatekeeper\kill_switch_ops_audit.rs:11:12
+    |
+ 11 |     pub fn trip(
+    |            ^^^^
+...
+ 15 |         gatekeeper: &mut GatekeeperEngine,
+    |         ---------------------------------
+ 16 |         voice: &mut VoiceInteractionController,
+ 17 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+ 18 |         audit_store: &mut PersistentJsonlAuditStore,
+ 19 |         bridge: &mut WebView2IpcBridge,
+    |         ------------------------------
+
+error[E0609]: no field `trip_latency_ms` on type `kill_switch_types::KillSwitchTripReport`
+   --> crates\miku-ui\src\lib.rs:292:29
+    |
+292 |         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+    |                             ^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `tripped_at_ms`, `reason`, `reaction_latency_ms`, `revoked_gatekeeper_tickets`, `voice_aborted` ... and 7 others
+
+error[E0599]: no method named `is_zeroed` found for reference `&types_and_buffer::VoicePcmRingBuffer` in the current scope
+   --> crates\miku-ui\src\lib.rs:293:36
+    |
+293 |         assert!(voice.pcm_buffer().is_zeroed());
+    |                                    ^^^^^^^^^ method not found in `&types_and_buffer::VoicePcmRingBuffer`
+
+error[E0061]: this method takes 2 arguments but 4 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:299:14
+    |
+299 |             .begin_cooling_ttl(&mut pill_fsm, &mut host, &mut avatar_rt, 2_000)
+    |              ^^^^^^^^^^^^^^^^^ -------------             -------------- unexpected argument #3
+    |                                |
+    |                                unexpected argument #1 of type `&mut hover_fsm::PillHoverStateMachine`
+    |
+note: method defined here
+   --> crates\miku-ui\src\power\coordinator.rs:226:12
+    |
+226 |     pub fn begin_cooling_ttl<D: WebView2LifecycleDriver>(
+    |            ^^^^^^^^^^^^^^^^^
+help: remove the extra arguments
+    |
+299 -             .begin_cooling_ttl(&mut pill_fsm, &mut host, &mut avatar_rt, 2_000)
+299 +             .begin_cooling_ttl(&mut host2_000)
+    |
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:302:14
+    |
+302 |             .poll_inactivity_ttl(
+    |              ^^^^^^^^^^^^^^^^^^^
+303 |                 5_100,
+304 |                 &mut pill_fsm,
+    |                 ------------- unexpected argument #2 of type `&mut hover_fsm::PillHoverStateMachine`
+...
+307 |                 &mut voice,
+    |                 ---------- expected `&mut WebView2IpcBridge`, found `&mut VoiceInteractionController`
+308 |                 &mut bridge,
+    |                 ----------- argument #6 of type `&std::path::Path` is missing
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:308:17
+    |
+308 |                 &mut bridge,
+    |                 ^^^^^^^^^^^
+    = note: expected mutable reference `&mut runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut Result<ipc_bridge::WebView2IpcBridge, constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\power\coordinator.rs:248:12
+    |
+248 |     pub fn poll_inactivity_ttl<D: WebView2LifecycleDriver>(
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+252 |         bridge: &mut WebView2IpcBridge,
+    |         ------------------------------
+253 |         voice: &mut VoiceInteractionController,
+254 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+255 |         avatar_dir: &Path,
+    |         -----------------
+help: did you mean
+    |
+302 ~             .poll_inactivity_ttl(
+303 +                 5_100,
+304 +                 &mut host,
+305 +                 /* &mut WebView2IpcBridge */,
+306 +                 &mut avatar_rt,
+307 +                 /* &mut ProductionAvatarRuntime */,
+308 +                 /* &Path */,
+309 +             )
+    |
+
+error[E0609]: no field `webview2_active_processes` on type `IdleSuspensionTransitionReceipt`
+   --> crates\miku-ui\src\lib.rs:312:25
+    |
+312 |         assert_eq!(susp.webview2_active_processes, 0);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `previous_state`, `new_state`, `transitioned_at_ms`, `webview2_evicted`, `residual_webview2_pids` ... and 8 others
+
+error[E0609]: no field `avatar_fps` on type `IdleSuspensionTransitionReceipt`
+   --> crates\miku-ui\src\lib.rs:313:25
+    |
+313 |         assert_eq!(susp.avatar_fps, 0);
+    |                         ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `previous_state`, `new_state`, `transitioned_at_ms`, `webview2_evicted`, `residual_webview2_pids` ... and 8 others
+
+error[E0061]: this method takes 8 arguments but 9 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:315:14
+    |
+315 |             .wake_on_stimulus(
+    |              ^^^^^^^^^^^^^^^^
+...
+321 |                 &mut pill_fsm,
+    |                 ------------- unexpected argument #6 of type `&mut hover_fsm::PillHoverStateMachine`
+...
+324 |                 &ks,
+    |                 --- expected `&Path`, found `&UiKillSwitchManager`
+    |
+note: method defined here
+   --> crates\miku-ui\src\power\wake_and_bank05.rs:9:12
+    |
+  9 |     pub fn wake_on_stimulus(
+    |            ^^^^^^^^^^^^^^^^
+...
+ 18 |         avatar_dir: &Path,
+    |         -----------------
+help: remove the extra argument
+    |
+320 ~                 0x2222,
+321 |                 &mut avatar_rt,
+322 ~                 /* &Path */,
+    |
+
+error[E0609]: no field `demo_requested` on type `sandbox_and_options::DemoCliOptions`
+   --> crates\miku-ui\src\lib.rs:337:22
+    |
+337 |         assert!(opts.demo_requested);
+    |                      ^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `enabled`, `duration_ms`, `auto_script`, `json_output`
+
+Some errors have detailed explanations: E0061, E0308, E0425, E0560, E0599, E0609.
+For more information about an error, try `rustc --explain E0061`.
+warning: `miku-ui` (lib test) generated 5 warnings (5 duplicates)
+error: could not compile `miku-ui` (lib test) due to 37 previous errors; 5 warnings emitted
+warning: build failed, waiting for other jobs to finish...
+PS C:\Users\cxmluwu\Downloads\prompt-genie>
+PS C:\Users\cxmluwu\Downloads\prompt-genie> # 3. Linter estricto Clippy en todo el workspace (0 warnings)
+PS C:\Users\cxmluwu\Downloads\prompt-genie> cargo clippy --manifest-path miku/Cargo.toml --workspace --all-targets -- -D warnings
+    Checking hashbrown v0.17.1
+    Checking equivalent v1.0.3
+    Checking winnow v0.7.15
+    Checking toml_write v0.1.2
+    Checking windows-link v0.2.1
+    Checking memchr v2.8.3
+    Checking serde_core v1.0.229
+    Checking zmij v1.0.23
+    Checking itoa v1.0.18
+    Checking bytes v1.12.1
+    Checking pin-project-lite v0.2.17
+    Checking windows-sys v0.61.2
+    Checking indexmap v2.14.2
+    Checking serde v1.0.229
+    Checking serde_json v1.0.154
+    Checking socket2 v0.6.5
+    Checking mio v1.2.4
+    Checking serde_spanned v0.6.9
+    Checking toml_datetime v0.6.11
+    Checking toml_edit v0.22.27
+    Checking tokio v1.54.1
+    Checking toml v0.8.23
+    Checking miku-protocol v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-protocol)
+    Checking miku-core v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-core)
+    Checking miku-gateway v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gateway)
+    Checking miku-gatekeeper v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gatekeeper)
+    Checking miku-platform v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-platform)
+    Checking miku-storage v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-storage)
+    Checking miku-ui v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-ui)
+    Checking miku-agent v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-agent)
+    Checking miku-memory v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-memory)
+error: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+note: the most public imported item is `pub(crate)`
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: reduce the glob import's visibility or increase visibility of imported items
+  = note: `-D unused-imports` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+error: unused import: `self::controller::*`
+  --> crates\miku-ui\src\demo\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+error: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the most public imported item is `pub(crate)`
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: reduce the glob import's visibility or increase visibility of imported items
+
+error: unused import: `self::controller::*`
+  --> crates\miku-ui\src\voice\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+error: ambiguous glob re-exports
+  --> crates\miku-ui\src\lib.rs:38:9
+   |
+38 | pub use crate::demo::*;
+   |         ^^^^^^^^^^^^^^ the name `controller` in the type namespace is first re-exported here
+...
+41 | pub use crate::voice::*;
+   |         --------------- but the name `controller` in the type namespace is also re-exported here
+   |
+   = note: `-D ambiguous-glob-reexports` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(ambiguous_glob_reexports)]`
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in this scope
+  --> crates\miku-ui\src\lib.rs:85:20
+   |
+85 |           assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+85 -         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+85 +         assert_eq!(REQUIRED_EX_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in module `crate::win32`
+  --> crates\miku-ui\src\lib.rs:85:59
+   |
+85 |           assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+   |                                                             ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+85 -         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EXTENDED_STYLE);
+85 +         assert_eq!(REQUIRED_EXTENDED_STYLE, crate::win32::REQUIRED_EX_STYLE);
+   |
+
+error[E0425]: cannot find value `REQUIRED_EXTENDED_STYLE` in this scope
+  --> crates\miku-ui\src\lib.rs:86:20
+   |
+86 |           assert_eq!(REQUIRED_EXTENDED_STYLE, 0x0808_0088);
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:40:1
+   |
+40 | / pub const REQUIRED_EX_STYLE: u32 =
+41 | |     WS_EX_LAYERED_STYLE | WS_EX_TOPMOST_STYLE | WS_EX_TOOLWINDOW_STYLE | WS_EX_NOACTIVATE_STYLE;
+   | |________________________________________________________________________________________________- similarly named constant `REQUIRED_EX_STYLE` defined here
+   |
+help: a constant with a similar name exists
+   |
+86 -         assert_eq!(REQUIRED_EXTENDED_STYLE, 0x0808_0088);
+86 +         assert_eq!(REQUIRED_EX_STYLE, 0x0808_0088);
+   |
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in this scope
+  --> crates\miku-ui\src\lib.rs:88:20
+   |
+88 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, crate::avatar::REQUIRED_SVG_ASSET_COUNT);
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in module `crate::avatar`
+  --> crates\miku-ui\src\lib.rs:88:61
+   |
+88 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, crate::avatar::REQUIRED_SVG_ASSET_COUNT);
+   |                                                             ^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::avatar`
+
+error[E0425]: cannot find value `REQUIRED_SVG_ASSET_COUNT` in this scope
+  --> crates\miku-ui\src\lib.rs:89:20
+   |
+89 |         assert_eq!(REQUIRED_SVG_ASSET_COUNT, 22);
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in this scope
+  --> crates\miku-ui\src\lib.rs:91:13
+   |
+91 |             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: crates\miku-ui\src\win32\constants_and_errors.rs:85:1
+   |
+85 | pub const DEFAULT_WEBVIEW2_WARM_TTL_MS: u64 = 15_000;
+   | ----------------------------------------------------- similarly named constant `DEFAULT_WEBVIEW2_WARM_TTL_MS` defined here
+   |
+help: a constant with a similar name exists
+   |
+91 -             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+91 +             DEFAULT_WEBVIEW2_WARM_TTL_MS,
+   |
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in module `crate::webview`
+  --> crates\miku-ui\src\lib.rs:92:29
+   |
+92 |             crate::webview::WEBVIEW2_WARM_TTL_DEFAULT_MS
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::webview`
+
+error[E0425]: cannot find value `CONFIRMATION_MODAL_DEFAULT_TTL_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:95:13
+    |
+ 95 |             CONFIRMATION_MODAL_DEFAULT_TTL_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:125:1
+    |
+125 | pub const DEFAULT_CONFIRMATION_MODAL_TTL_MS: u64 = 30_000;
+    | ---------------------------------------------------------- similarly named constant `DEFAULT_CONFIRMATION_MODAL_TTL_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+ 95 -             CONFIRMATION_MODAL_DEFAULT_TTL_MS,
+ 95 +             DEFAULT_CONFIRMATION_MODAL_TTL_MS,
+    |
+
+error[E0425]: cannot find value `CONFIRMATION_MODAL_DEFAULT_TTL_MS` in module `crate::gatekeeper`
+  --> crates\miku-ui\src\lib.rs:96:32
+   |
+96 |             crate::gatekeeper::CONFIRMATION_MODAL_DEFAULT_TTL_MS
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::gatekeeper`
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:99:13
+    |
+ 99 |             MAX_KILL_SWITCH_TRIP_LATENCY_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:148:1
+    |
+148 | pub const MAX_KILL_SWITCH_LATENCY_MS: f64 = 20.0;
+    | ------------------------------------------------- similarly named constant `MAX_KILL_SWITCH_LATENCY_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+ 99 -             MAX_KILL_SWITCH_TRIP_LATENCY_MS,
+ 99 +             MAX_KILL_SWITCH_LATENCY_MS,
+    |
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in module `crate::gatekeeper`
+   --> crates\miku-ui\src\lib.rs:100:32
+    |
+100 |             crate::gatekeeper::MAX_KILL_SWITCH_TRIP_LATENCY_MS
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::gatekeeper`
+
+error[E0425]: cannot find value `DEFAULT_AUDIT_MAX_FILE_BYTES` in this scope
+   --> crates\miku-ui\src\lib.rs:103:13
+    |
+103 |             DEFAULT_AUDIT_MAX_FILE_BYTES,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:129:1
+    |
+129 | pub const DEFAULT_MAX_AUDIT_FILE_BYTES: usize = 5 * 1024 * 1024;
+    | ---------------------------------------------------------------- similarly named constant `DEFAULT_MAX_AUDIT_FILE_BYTES` defined here
+    |
+help: a constant with a similar name exists
+    |
+103 -             DEFAULT_AUDIT_MAX_FILE_BYTES,
+103 +             DEFAULT_MAX_AUDIT_FILE_BYTES,
+    |
+
+error[E0425]: cannot find value `DEFAULT_AUDIT_MAX_FILE_BYTES` in module `crate::audit`
+   --> crates\miku-ui\src\lib.rs:104:27
+    |
+104 |             crate::audit::DEFAULT_AUDIT_MAX_FILE_BYTES
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::audit`
+
+error[E0425]: cannot find value `SOUNDWAVE_BAND_COUNT` in module `crate::voice`
+   --> crates\miku-ui\src\lib.rs:106:56
+    |
+106 |         assert_eq!(SOUNDWAVE_BAND_COUNT, crate::voice::SOUNDWAVE_BAND_COUNT);
+    |                                                        ^^^^^^^^^^^^^^^^^^^^ not found in `crate::voice`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::SOUNDWAVE_BAND_COUNT;
+    |
+help: if you import `SOUNDWAVE_BAND_COUNT`, refer to it directly
+    |
+106 -         assert_eq!(SOUNDWAVE_BAND_COUNT, crate::voice::SOUNDWAVE_BAND_COUNT);
+106 +         assert_eq!(SOUNDWAVE_BAND_COUNT, SOUNDWAVE_BAND_COUNT);
+    |
+
+error[E0425]: cannot find value `DEFAULT_IDLE_SUSPENSION_TTL_MS` in module `crate::power`
+   --> crates\miku-ui\src\lib.rs:109:27
+    |
+109 |             crate::power::DEFAULT_IDLE_SUSPENSION_TTL_MS
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::power`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEFAULT_IDLE_SUSPENSION_TTL_MS;
+    |
+help: if you import `DEFAULT_IDLE_SUSPENSION_TTL_MS`, refer to it directly
+    |
+109 -             crate::power::DEFAULT_IDLE_SUSPENSION_TTL_MS
+109 +             DEFAULT_IDLE_SUSPENSION_TTL_MS
+    |
+
+error[E0425]: cannot find value `DEMO_BADGE_PREFIX` in module `crate::demo`
+   --> crates\miku-ui\src\lib.rs:111:52
+    |
+111 |         assert_eq!(DEMO_BADGE_PREFIX, crate::demo::DEMO_BADGE_PREFIX);
+    |                                                    ^^^^^^^^^^^^^^^^^ not found in `crate::demo`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEMO_BADGE_PREFIX;
+    |
+help: if you import `DEMO_BADGE_PREFIX`, refer to it directly
+    |
+111 -         assert_eq!(DEMO_BADGE_PREFIX, crate::demo::DEMO_BADGE_PREFIX);
+111 +         assert_eq!(DEMO_BADGE_PREFIX, DEMO_BADGE_PREFIX);
+    |
+
+error[E0425]: cannot find value `DEMO_MAX_STARTUP_LATENCY_MS` in module `crate::demo`
+   --> crates\miku-ui\src\lib.rs:114:26
+    |
+114 |             crate::demo::DEMO_MAX_STARTUP_LATENCY_MS
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::demo`
+    |
+help: consider importing this constant through its public re-export
+    |
+ 75 +     use crate::DEMO_MAX_STARTUP_LATENCY_MS;
+    |
+help: if you import `DEMO_MAX_STARTUP_LATENCY_MS`, refer to it directly
+    |
+114 -             crate::demo::DEMO_MAX_STARTUP_LATENCY_MS
+114 +             DEMO_MAX_STARTUP_LATENCY_MS
+    |
+
+error[E0425]: cannot find value `WEBVIEW2_WARM_TTL_DEFAULT_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:261:13
+    |
+261 |             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:85:1
+    |
+ 85 | pub const DEFAULT_WEBVIEW2_WARM_TTL_MS: u64 = 15_000;
+    | ----------------------------------------------------- similarly named constant `DEFAULT_WEBVIEW2_WARM_TTL_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+261 -             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+261 +             DEFAULT_WEBVIEW2_WARM_TTL_MS,
+    |
+
+error[E0425]: cannot find value `MAX_KILL_SWITCH_TRIP_LATENCY_MS` in this scope
+   --> crates\miku-ui\src\lib.rs:292:47
+    |
+292 |         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates\miku-ui\src\win32\constants_and_errors.rs:148:1
+    |
+148 | pub const MAX_KILL_SWITCH_LATENCY_MS: f64 = 20.0;
+    | ------------------------------------------------- similarly named constant `MAX_KILL_SWITCH_LATENCY_MS` defined here
+    |
+help: a constant with a similar name exists
+    |
+292 -         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+292 +         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_LATENCY_MS);
+    |
+
+error[E0560]: struct `win32::geometry_and_styles::MonitorDescriptor` has no field named `device_id`
+   --> crates\miku-ui\src\lib.rs:237:13
+    |
+237 |             device_id: "DISPLAY_MODULAR_TEST".to_string(),
+    |             ^^^^^^^^^ `win32::geometry_and_styles::MonitorDescriptor` does not have this field
+    |
+    = note: available fields are: `device_name`, `monitor_rect`
+
+error[E0599]: no associated function or constant named `load_from_dir` found for struct `avatar::runtime_hot_reload::ProductionAvatarRuntime` in the current scope
+   --> crates\miku-ui\src\lib.rs:250:54
+    |
+250 |         let mut avatar_rt = ProductionAvatarRuntime::load_from_dir(&avatar_dir).unwrap();
+    |                                                      ^^^^^^^^^^^^^ associated function or constant not found in `avatar::runtime_hot_reload::ProductionAvatarRuntime`
+    |
+   ::: crates\miku-ui\src\avatar\runtime_hot_reload.rs:134:1
+    |
+134 | pub struct ProductionAvatarRuntime {
+    | ---------------------------------- associated function or constant `load_from_dir` not found for this struct
+    |
+note: if you're trying to build a new `avatar::runtime_hot_reload::ProductionAvatarRuntime`, consider using `avatar::runtime_hot_reload::ProductionAvatarRuntime::from_snapshot` which returns `std::result::Result<avatar::runtime_hot_reload::ProductionAvatarRuntime, win32::constants_and_errors::UiError>`
+   --> crates\miku-ui\src\avatar\runtime_hot_reload.rs:145:5
+    |
+145 | /     pub fn from_snapshot(
+146 | |         snapshot: AvatarPackSnapshot,
+147 | |         base_avatar_dir: &Path,
+148 | |         mood: AvatarMood,
+149 | |         equipped_accessories: Vec<String>,
+150 | |         breath_phase_rad: f64,
+151 | |     ) -> Result<Self, UiError> {
+    | |______________________________^
+
+error[E0061]: this function takes 6 arguments but 4 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:257:24
+    |
+257 |            let mut host = WebView2HostStateMachine::new(
+    |  _________________________^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-
+258 | |/             driver,
+259 | ||             Path::new("C:\\Users\\Modular\\AppData\\Local"),
+    | ||             ----------------------------------------------- unexpected argument #2 of type `&std::path::Path`
+260 | ||             false,
+    | ||             -----
+    | ||_____________|___|
+    | |              |   three arguments of type `win32::geometry_and_styles::MonitorDescriptor`, `u32`, and `std::option::Option<&std::path::Path>` are missing
+    | |              unexpected argument #3 of type `bool`
+261 | |              WEBVIEW2_WARM_TTL_DEFAULT_MS,
+262 | |          )
+    | |__________- argument #5 of type `u64` is missing
+    |
+note: associated function defined here
+   --> crates\miku-ui\src\webview\host_fsm.rs:21:12
+    |
+ 21 |     pub fn new(
+    |            ^^^
+ 22 |         monitor: MonitorDescriptor,
+    |         --------------------------
+ 23 |         top_margin_px: u32,
+    |         ------------------
+ 24 |         local_appdata_override: Option<&Path>,
+    |         -------------------------------------
+ 25 |         policy: WebView2SecurityPolicy,
+ 26 |         ttl_ms: u64,
+    |         -----------
+help: did you mean
+    |
+257 ~         let mut host = WebView2HostStateMachine::new(
+258 +             /* MonitorDescriptor */,
+259 +             /* u32 */,
+260 +             /* Option<&Path> */,
+261 +             WEBVIEW2_WARM_TTL_DEFAULT_MS,
+262 +             /* u64 */,
+263 +             driver,
+264 +         )
+    |
+
+error[E0308]: mismatched types
+   --> crates\miku-ui\src\lib.rs:265:83
+    |
+265 |         let clean = sanitize_for_text_content("<img src=x onerror=alert(1)>Miku", 128);
+    |                     -------------------------                                     ^^^ expected `&str`, found integer
+    |                     |
+    |                     arguments to this function are incorrect
+    |
+note: function defined here
+   --> crates\miku-ui\src\webview\ipc_envelope.rs:142:8
+    |
+142 | pub fn sanitize_for_text_content(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+143 |     element_id: &str,
+144 |     untrusted_text: &str,
+    |     --------------------
+
+error[E0599]: no method named `contains` found for enum `std::result::Result<T, E>` in the current scope
+   --> crates\miku-ui\src\lib.rs:266:24
+    |
+266 |         assert!(!clean.contains("<img"));
+    |                        ^^^^^^^^ method not found in `Result<WebViewIpcPayloadV1, UiError>`
+    |
+    = note: the full name for the type has been written to 'C:\Users\cxmluwu\Downloads\prompt-genie\miku\target\debug\deps\miku_ui-053409932f37ca61.long-type-3865217514907471588.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> crates\miku-ui\src\lib.rs:269:30
+    |
+269 |         let temp_audit_dir = create_unique_isolated_audit_temp_dir("modular_2_12").unwrap();
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^---------------- argument #2 of type `usize` is missing
+    |
+note: function defined here
+   --> crates\miku-ui\src\audit\paths_and_store.rs:127:8
+    |
+127 | pub fn create_unique_isolated_audit_temp_dir(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+128 |     prefix: &str,
+129 |     worker_idx: usize,
+    |     -----------------
+help: provide the argument
+    |
+269 |         let temp_audit_dir = create_unique_isolated_audit_temp_dir("modular_2_12", /* usize */).unwrap();
+    |                                                                                  +++++++++++++
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:274:14
+    |
+274 |             .start_ptt_session(1_000, 0x1111, 0x1111, 0x2222, &mut avatar_rt, &mut bridge)
+    |              ^^^^^^^^^^^^^^^^^ ----- expected `&str`, found integer
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:274:79
+    |
+274 |             .start_ptt_session(1_000, 0x1111, 0x1111, 0x2222, &mut avatar_rt, &mut bridge)
+    |                                                                               ^^^^^^^^^^^
+    = note: expected mutable reference `&mut avatar::runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut std::result::Result<webview::ipc_bridge::WebView2IpcBridge, win32::constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\voice\controller.rs:118:12
+    |
+118 |     pub fn start_ptt_session(
+    |            ^^^^^^^^^^^^^^^^^
+119 |         &mut self,
+120 |         hotkey_pressed: &str,
+    |         --------------------
+...
+125 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+
+error[E0061]: this method takes 4 arguments but 3 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:277:14
+    |
+277 |             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+    |              ^^^^^^^^^^^^^^^^-------------------------------------- argument #4 of type `std::option::Option<&mut webview::ipc_bridge::WebView2IpcBridge>` is missing
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:277:56
+    |
+277 |             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+    |                                                        ^^^^^^^^^^^
+    = note: expected mutable reference `&mut avatar::runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut std::result::Result<webview::ipc_bridge::WebView2IpcBridge, win32::constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\voice\controller.rs:216:12
+    |
+216 |     pub fn ingest_pcm_frame(
+    |            ^^^^^^^^^^^^^^^^
+...
+220 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+221 |         bridge: Option<&mut WebView2IpcBridge>,
+    |         --------------------------------------
+help: provide the argument
+    |
+277 -             .ingest_pcm_frame(&[8_000i16; 320], 1_020, &mut bridge)
+277 +             .ingest_pcm_frame(&[8_000i16; 320], 1_020, /* &mut ProductionAvatarRuntime */, /* Option<&mut WebView2IpcBridge> */)
+    |
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:282:14
+    |
+282 |             .trip(
+    |              ^^^^
+...
+287 |                 &mut audit_store,
+    |                 ---------------- expected `&mut ProductionAvatarRuntime`, found `&mut PersistentJsonlAuditStore`
+    |
+note: expected `&mut GatekeeperEngine`, found `&mut Result<GatekeeperEngine, JailError>`
+   --> crates\miku-ui\src\lib.rs:285:17
+    |
+285 |                 &mut gk,
+    |                 ^^^^^^^
+    = note: expected mutable reference `&mut GatekeeperEngine`
+               found mutable reference `&mut std::result::Result<GatekeeperEngine, miku_gatekeeper::JailError>`
+    = note: expected mutable reference `&mut avatar::runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut audit::paths_and_store::PersistentJsonlAuditStore`
+note: expected `&mut WebView2IpcBridge`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:289:17
+    |
+289 |                 &mut bridge,
+    |                 ^^^^^^^^^^^
+    = note: expected mutable reference `&mut WebView2IpcBridge`
+               found mutable reference `&mut std::result::Result<WebView2IpcBridge, win32::constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\gatekeeper\kill_switch_ops_audit.rs:11:12
+    |
+ 11 |     pub fn trip(
+    |            ^^^^
+...
+ 15 |         gatekeeper: &mut GatekeeperEngine,
+    |         ---------------------------------
+ 16 |         voice: &mut VoiceInteractionController,
+ 17 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+ 18 |         audit_store: &mut PersistentJsonlAuditStore,
+ 19 |         bridge: &mut WebView2IpcBridge,
+    |         ------------------------------
+
+error[E0609]: no field `trip_latency_ms` on type `gatekeeper::kill_switch_types::KillSwitchTripReport`
+   --> crates\miku-ui\src\lib.rs:292:29
+    |
+292 |         assert!(trip_report.trip_latency_ms < MAX_KILL_SWITCH_TRIP_LATENCY_MS);
+    |                             ^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `tripped_at_ms`, `reason`, `reaction_latency_ms`, `revoked_gatekeeper_tickets`, `voice_aborted` ... and 7 others
+
+error[E0599]: no method named `is_zeroed` found for reference `&voice::types_and_buffer::VoicePcmRingBuffer` in the current scope
+   --> crates\miku-ui\src\lib.rs:293:36
+    |
+293 |         assert!(voice.pcm_buffer().is_zeroed());
+    |                                    ^^^^^^^^^ method not found in `&voice::types_and_buffer::VoicePcmRingBuffer`
+
+error[E0061]: this method takes 2 arguments but 4 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:299:14
+    |
+299 |             .begin_cooling_ttl(&mut pill_fsm, &mut host, &mut avatar_rt, 2_000)
+    |              ^^^^^^^^^^^^^^^^^ -------------             -------------- unexpected argument #3
+    |                                |
+    |                                unexpected argument #1 of type `&mut win32::hover_fsm::PillHoverStateMachine`
+    |
+note: method defined here
+   --> crates\miku-ui\src\power\coordinator.rs:226:12
+    |
+226 |     pub fn begin_cooling_ttl<D: WebView2LifecycleDriver>(
+    |            ^^^^^^^^^^^^^^^^^
+help: remove the extra arguments
+    |
+299 -             .begin_cooling_ttl(&mut pill_fsm, &mut host, &mut avatar_rt, 2_000)
+299 +             .begin_cooling_ttl(&mut host2_000)
+    |
+
+error[E0308]: arguments to this method are incorrect
+   --> crates\miku-ui\src\lib.rs:302:14
+    |
+302 |             .poll_inactivity_ttl(
+    |              ^^^^^^^^^^^^^^^^^^^
+303 |                 5_100,
+304 |                 &mut pill_fsm,
+    |                 ------------- unexpected argument #2 of type `&mut win32::hover_fsm::PillHoverStateMachine`
+...
+307 |                 &mut voice,
+    |                 ---------- expected `&mut WebView2IpcBridge`, found `&mut VoiceInteractionController`
+308 |                 &mut bridge,
+    |                 ----------- argument #6 of type `&std::path::Path` is missing
+    |
+note: expected `&mut ProductionAvatarRuntime`, found `&mut Result<WebView2IpcBridge, UiError>`
+   --> crates\miku-ui\src\lib.rs:308:17
+    |
+308 |                 &mut bridge,
+    |                 ^^^^^^^^^^^
+    = note: expected mutable reference `&mut avatar::runtime_hot_reload::ProductionAvatarRuntime`
+               found mutable reference `&mut std::result::Result<webview::ipc_bridge::WebView2IpcBridge, win32::constants_and_errors::UiError>`
+note: method defined here
+   --> crates\miku-ui\src\power\coordinator.rs:248:12
+    |
+248 |     pub fn poll_inactivity_ttl<D: WebView2LifecycleDriver>(
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+252 |         bridge: &mut WebView2IpcBridge,
+    |         ------------------------------
+253 |         voice: &mut VoiceInteractionController,
+254 |         avatar: &mut ProductionAvatarRuntime,
+    |         ------------------------------------
+255 |         avatar_dir: &Path,
+    |         -----------------
+help: did you mean
+    |
+302 ~             .poll_inactivity_ttl(
+303 +                 5_100,
+304 +                 &mut host,
+305 +                 /* &mut WebView2IpcBridge */,
+306 +                 &mut avatar_rt,
+307 +                 /* &mut ProductionAvatarRuntime */,
+308 +                 /* &Path */,
+309 +             )
+    |
+
+error[E0609]: no field `webview2_active_processes` on type `power::coordinator::IdleSuspensionTransitionReceipt`
+   --> crates\miku-ui\src\lib.rs:312:25
+    |
+312 |         assert_eq!(susp.webview2_active_processes, 0);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `previous_state`, `new_state`, `transitioned_at_ms`, `webview2_evicted`, `residual_webview2_pids` ... and 8 others
+
+error[E0609]: no field `avatar_fps` on type `power::coordinator::IdleSuspensionTransitionReceipt`
+   --> crates\miku-ui\src\lib.rs:313:25
+    |
+313 |         assert_eq!(susp.avatar_fps, 0);
+    |                         ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `previous_state`, `new_state`, `transitioned_at_ms`, `webview2_evicted`, `residual_webview2_pids` ... and 8 others
+
+error[E0061]: this method takes 8 arguments but 9 arguments were supplied
+   --> crates\miku-ui\src\lib.rs:315:14
+    |
+315 |             .wake_on_stimulus(
+    |              ^^^^^^^^^^^^^^^^
+...
+321 |                 &mut pill_fsm,
+    |                 ------------- unexpected argument #6 of type `&mut win32::hover_fsm::PillHoverStateMachine`
+...
+324 |                 &ks,
+    |                 --- expected `&Path`, found `&UiKillSwitchManager`
+    |
+note: method defined here
+   --> crates\miku-ui\src\power\wake_and_bank05.rs:9:12
+    |
+  9 |     pub fn wake_on_stimulus(
+    |            ^^^^^^^^^^^^^^^^
+...
+ 18 |         avatar_dir: &Path,
+    |         -----------------
+help: remove the extra argument
+    |
+320 ~                 0x2222,
+321 |                 &mut avatar_rt,
+322 ~                 /* &Path */,
+    |
+
+error[E0609]: no field `demo_requested` on type `demo::sandbox_and_options::DemoCliOptions`
+   --> crates\miku-ui\src\lib.rs:337:22
+    |
+337 |         assert!(opts.demo_requested);
+    |                      ^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `enabled`, `duration_ms`, `auto_script`, `json_output`
+
+error: could not compile `miku-ui` (lib) due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...
+Some errors have detailed explanations: E0061, E0308, E0425, E0560, E0599, E0609.
+For more information about an error, try `rustc --explain E0061`.
+error: could not compile `miku-ui` (lib test) due to 42 previous errors
+PS C:\Users\cxmluwu\Downloads\prompt-genie>
+PS C:\Users\cxmluwu\Downloads\prompt-genie> # 4. Verificación de paridad funcional del Modo Demo tras la modularización (1.5 segundos)
+PS C:\Users\cxmluwu\Downloads\prompt-genie> cargo run --release --manifest-path miku/Cargo.toml -p miku-cli -- demo --duration-ms 1500
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling equivalent v1.0.3
+   Compiling hashbrown v0.17.1
+   Compiling windows-link v0.2.1
+   Compiling zmij v1.0.23
+   Compiling toml_write v0.1.2
+   Compiling winnow v0.7.15
+   Compiling serde_json v1.0.154
+   Compiling windows-sys v0.61.2
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling bytes v1.12.1
+   Compiling pin-project-lite v0.2.17
+   Compiling indexmap v2.14.2
+   Compiling syn v3.0.9
+   Compiling mio v1.2.4
+   Compiling socket2 v0.6.5
+   Compiling serde_derive v1.0.229
+   Compiling tokio-macros v2.7.2
+   Compiling tokio v1.54.1
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling toml_edit v0.22.27
+   Compiling toml v0.8.23
+   Compiling miku-protocol v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-protocol)
+   Compiling miku-core v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-core)
+   Compiling miku-gateway v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gateway)
+   Compiling miku-gatekeeper v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-gatekeeper)
+   Compiling miku-platform v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-platform)
+   Compiling miku-ui v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-ui)
+   Compiling miku-storage v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-storage)
+warning: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+note: the most public imported item is `pub(crate)`
+ --> crates\miku-ui\src\audit\mod.rs:9:9
+  |
+9 | pub use self::append_and_verify::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: reduce the glob import's visibility or increase visibility of imported items
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `self::controller::*`
+  --> crates\miku-ui\src\demo\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: glob import doesn't reexport anything with visibility `pub` because no imported item is public enough
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the most public imported item is `pub(crate)`
+  --> crates\miku-ui\src\demo\mod.rs:13:9
+   |
+13 | pub use self::win32_ffi_and_paint::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: reduce the glob import's visibility or increase visibility of imported items
+
+warning: unused import: `self::controller::*`
+  --> crates\miku-ui\src\voice\mod.rs:10:9
+   |
+10 | pub use self::controller::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: ambiguous glob re-exports
+  --> crates\miku-ui\src\lib.rs:38:9
+   |
+38 | pub use crate::demo::*;
+   |         ^^^^^^^^^^^^^^ the name `controller` in the type namespace is first re-exported here
+...
+41 | pub use crate::voice::*;
+   |         --------------- but the name `controller` in the type namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+   Compiling miku-cli v0.1.0 (C:\Users\cxmluwu\Downloads\prompt-genie\miku\crates\miku-cli)
+warning: `miku-ui` (lib) generated 5 warnings (run `cargo fix --lib -p miku-ui` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 30.76s
+     Running `miku\target\release\miku-cli.exe demo --duration-ms 1500`
+================================================================
+ [DEMO] MIKU DESKTOP ORCHESTRATOR · PASTILLA WIN32 EN VIVO
+================================================================
+ Geometry : 248x44 @ (836, 0) | DPI=96
+ Sandbox  : 100% In-Memory (0 Disk Writes · 0 API Keys)
+ Controls :
+   • Hover Mouse over top-center pill -> Expand & Wake 6-Spring Avatar
+   • Left-Click on pill               -> Trigger/Approve [DEMO] Y/N Card
+   • Alt + Space                      -> Simulate PTT Voice & 5-Band Wave
+   • Ctrl + Alt + Shift + K           -> Trip Emergency Kill Switch (#F43F5E)
+   • Press ESCAPE                     -> Clean Exit (0 Orphans)
+================================================================
+================================================================
+ MIKU-CLI · PASO 2.11 · MODO DEMO INTERACTIVO STANDALONE (F-28)
+================================================================
+Badge Prefijo      : [DEMO]
+Pastilla Win32     : 248x44 @ (836, 0) [WS_EX_NOACTIVATE]
+Latencia Arranque  : 14.8446 ms (umbral < 50.0 ms)
+Física 6 Resortes  : ticks=0 | max_fps=60.0 | settled_fps=0.00
+Interacciones Demo : hover=0 | click_modal=0 | ptt_alt_space=0 | kill_switch=0 | escape=true
+DemoSandboxGuard   : disk_files_mutated=0 | api_keys_touched=0
+Teardown Cooperativo: window_destroyed=true | hotkeys_unreg=true | pcm_zero=true | ipc_zero=true | ram=2.51 MB
+================================================================
+VERIFIER: DEMO_OK (exit_code=0, disk_files_mutated=0, api_keys_touched=0)

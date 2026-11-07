@@ -15,9 +15,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 use miku_cli::{
-    query_live_windows_webview2_version, run_deterministic_doctor_benchmark_cycle,
-    run_doctor_suite, DoctorRunConfig, WebView2ProbeSource, BUDGET_MAX_PRIVATE_RAM_MB,
-    BUDGET_MAX_RELEASE_BINARY_MB,
+    execute_cli_demo_mode, format_demo_session_report, query_live_windows_webview2_version,
+    run_deterministic_doctor_benchmark_cycle, run_doctor_suite, DoctorRunConfig,
+    WebView2ProbeSource, BUDGET_MAX_PRIVATE_RAM_MB, BUDGET_MAX_RELEASE_BINARY_MB,
 };
 use miku_platform::{configure_headless_command, LaunchConfig, WIN32_CREATE_NO_WINDOW};
 
@@ -171,6 +171,27 @@ fn percentile(sorted: &[f64], pct: f64) -> f64 {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    // Subcommand / Flag mode: `miku-cli demo` or `miku-cli --demo` (Paso 2.11 · F-28)
+    match execute_cli_demo_mode(&args) {
+        Ok(Some((demo_opts, report))) => {
+            if demo_opts.json_output {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string())
+                );
+            } else {
+                print!("{}", format_demo_session_report(&report));
+            }
+            std::process::exit(0);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("MIKU_CLI_DEMO_ERR: {e}");
+            std::process::exit(1);
+        }
+    }
+
     let current_exe = env::current_exe().expect("failed to resolve current_exe");
     let binary_mb = fs::metadata(&current_exe)
         .map(|m| (m.len() as f64) / (1024.0 * 1024.0))
