@@ -6,7 +6,7 @@ use std::time::Instant;
 use miku_protocol::sha256_hex;
 use serde::{Deserialize, Serialize};
 
-pub const EXPECTED_WORKSPACE_CRATE_COUNT: usize = 10;
+pub const EXPECTED_WORKSPACE_CRATE_COUNT: usize = 11;
 
 pub const ALLOWED_PERMISSIVE_SPDX_IDS: &[&str] = &[
     "MIT",

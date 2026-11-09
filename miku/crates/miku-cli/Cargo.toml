@@ -20,6 +20,7 @@ miku-core = { path = "../miku-core" }
 miku-gateway = { path = "../miku-gateway" }
 miku-gatekeeper = { path = "../miku-gatekeeper" }
 miku-storage = { path = "../miku-storage" }
+miku-agent = { path = "../miku-agent" }
 miku-platform = { path = "../miku-platform" }
 miku-ui = { path = "../miku-ui" }
 serde = { version = "1.0", features = ["derive"] }

@@ -173,6 +173,9 @@ pub(crate) mod win32_demo_ffi {
         wparam: Wparam,
         lparam: Lparam,
     ) -> Lresult {
+        if msg == 0x0281 {
+            return 0;
+        }
         if let Some(ma) = handle_wm_mouseactivate(msg) {
             return ma;
         }

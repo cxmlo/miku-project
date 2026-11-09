@@ -29,6 +29,9 @@ use miku_protocol::{
 use serde::{Deserialize, Serialize};
 
 pub mod license_audit;
+pub mod secrets_cmd;
+
+pub use secrets_cmd::*;
 
 pub const WEBVIEW2_RUNTIME_GUID: &str = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 pub const DOCTOR_SCHEMA_VERSION_V0: &str = "miku.doctor.v0";

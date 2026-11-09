@@ -69,18 +69,21 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "toml",
 ]
 
 [[package]]
 name = "miku-cli"
 version = "0.1.0"
 dependencies = [
+ "miku-agent",
  "miku-core",
  "miku-gatekeeper",
  "miku-gateway",
  "miku-platform",
  "miku-protocol",
  "miku-storage",
+ "miku-ui",
  "serde",
  "serde_json",
  "tokio",
@@ -118,6 +121,20 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "miku-mcp"
+version = "0.1.0"
+dependencies = [
+ "miku-agent",
+ "miku-core",
+ "miku-gatekeeper",
+ "miku-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -171,6 +188,7 @@ name = "miku-ui"
 version = "0.1.0"
 dependencies = [
  "miku-core",
+ "miku-gatekeeper",
  "miku-platform",
  "miku-protocol",
  "serde",

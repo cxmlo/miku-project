@@ -128,18 +128,42 @@ impl PersistentJsonlAuditStore {
         initial_prev_hash: &str,
         initial_seq: u64,
     ) -> Result<JsonlChainVerificationReport, UiError> {
+        use std::borrow::Cow;
+        use std::fmt::Write;
+
+        #[derive(Deserialize)]
+        struct BorrowedAuditEntry<'a> {
+            seq: u64,
+            timestamp_ms: u64,
+            #[serde(borrow)]
+            agent: Cow<'a, str>,
+            #[serde(borrow)]
+            capability: Cow<'a, str>,
+            #[serde(borrow)]
+            target: Cow<'a, str>,
+            #[serde(borrow)]
+            verdict: Cow<'a, str>,
+            #[serde(borrow)]
+            reason: Cow<'a, str>,
+            #[serde(borrow)]
+            prev_hash: Cow<'a, str>,
+            #[serde(borrow)]
+            entry_hash: Cow<'a, str>,
+        }
+
         let t0 = Instant::now();
-        let mut expected_prev = initial_prev_hash.to_string();
+        let mut expected_prev: Cow<'_, str> = Cow::Borrowed(initial_prev_hash);
         let mut expected_seq = initial_seq;
         let mut verified_entries = 0usize;
         let mut last_seq = 0u64;
+        let mut canonical_buf = String::with_capacity(256);
 
         for (line_idx, raw_line) in raw_jsonl.lines().enumerate() {
             let trimmed = raw_line.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let entry: AuditEntry = serde_json::from_str(trimmed).map_err(|e| {
+            let entry: BorrowedAuditEntry<'_> = serde_json::from_str(trimmed).map_err(|e| {
                 UiError::AuditLogTamperDetected(JsonlTamperDiagnostic {
                     file_name: file_name.to_string(),
                     corrupted_line_index: line_idx,
@@ -162,7 +186,7 @@ impl PersistentJsonlAuditStore {
                 }));
             }
 
-            if entry.prev_hash != expected_prev {
+            if entry.prev_hash.as_ref() != expected_prev.as_ref() {
                 return Err(UiError::AuditLogTamperDetected(JsonlTamperDiagnostic {
                     file_name: file_name.to_string(),
                     corrupted_line_index: line_idx,
@@ -175,17 +199,22 @@ impl PersistentJsonlAuditStore {
                 }));
             }
 
-            let recomputed = AuditEntry::compute_hash(
-                &entry.prev_hash,
+            canonical_buf.clear();
+            let _ = write!(
+                &mut canonical_buf,
+                "MIKU_AUDIT_V1|prev={}|seq={}|ts={}|agent={}|cap={}|target={}|verdict={}|reason={}",
+                entry.prev_hash,
                 entry.seq,
                 entry.timestamp_ms,
-                &entry.agent,
-                &entry.capability,
-                &entry.target,
-                &entry.verdict,
-                &entry.reason,
+                entry.agent,
+                entry.capability,
+                entry.target,
+                entry.verdict,
+                entry.reason
             );
-            if recomputed != entry.entry_hash {
+            let recomputed_bytes = miku_protocol::sha256_hex_bytes(canonical_buf.as_bytes());
+            if recomputed_bytes.as_slice() != entry.entry_hash.as_bytes() {
+                let recomputed_str = std::str::from_utf8(&recomputed_bytes).unwrap_or("");
                 return Err(UiError::AuditLogTamperDetected(JsonlTamperDiagnostic {
                     file_name: file_name.to_string(),
                     corrupted_line_index: line_idx,
@@ -193,7 +222,7 @@ impl PersistentJsonlAuditStore {
                     found_seq: Some(entry.seq),
                     reason: format!(
                         "entry_hash cryptographic mismatch: recomputed {}, stored {}",
-                        recomputed, entry.entry_hash
+                        recomputed_str, entry.entry_hash
                     ),
                 }));
             }
@@ -211,7 +240,7 @@ impl PersistentJsonlAuditStore {
             first_seq: if verified_entries > 0 { initial_seq } else { 0 },
             last_seq,
             anchor_prev_hash: initial_prev_hash.to_string(),
-            tip_entry_hash: expected_prev,
+            tip_entry_hash: expected_prev.into_owned(),
             elapsed_ms,
         })
     }
@@ -339,4 +368,3 @@ impl FileCreationHelper {
             })
     }
 }
-

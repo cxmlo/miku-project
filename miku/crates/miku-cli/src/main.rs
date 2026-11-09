@@ -15,7 +15,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 use miku_cli::{
-    execute_cli_demo_mode, format_demo_session_report, query_live_windows_webview2_version,
+    execute_cli_demo_mode, execute_cli_secret_command, format_demo_session_report, query_live_windows_webview2_version,
     run_deterministic_doctor_benchmark_cycle, run_doctor_suite, DoctorRunConfig,
     WebView2ProbeSource, BUDGET_MAX_PRIVATE_RAM_MB, BUDGET_MAX_RELEASE_BINARY_MB,
 };
@@ -188,6 +188,19 @@ fn main() {
         Ok(None) => {}
         Err(e) => {
             eprintln!("MIKU_CLI_DEMO_ERR: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    // Subcommand mode: `miku-cli secret ...` (Paso 3.6 · F-08)
+    match execute_cli_secret_command(&args) {
+        Ok(Some(output)) => {
+            println!("{}", output);
+            std::process::exit(0);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("MIKU_CLI_SECRET_ERR: {}", e);
             std::process::exit(1);
         }
     }

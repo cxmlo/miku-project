@@ -3,7 +3,6 @@ use crate::prelude::*;
 
 impl DemoInteractiveController {
     pub fn new(avatar_dir: PathBuf, monitor: MonitorDescriptor) -> Result<Self, UiError> {
-        let _catalog = validate_avatar_asset_catalog(&avatar_dir)?;
         let pill_fsm = PillHoverStateMachine::new(monitor.clone(), TOP_MARGIN_DEFAULT_PX)?;
         let reloader = AvatarPackHotReloader::new(&avatar_dir)?;
         let voice = VoiceInteractionController::new_default(avatar_dir.clone());
@@ -21,6 +20,48 @@ impl DemoInteractiveController {
 
         Ok(Self {
             avatar_dir,
+            temp_audit_dir,
+            monitor,
+            pill_fsm,
+            reloader,
+            voice,
+            kill_switch,
+            gatekeeper,
+            audit_store,
+            bridge,
+            sandbox,
+            phase: DemoInteractionPhase::IdleCompact,
+            active_demo_ticket: None,
+            last_demo_banner: banner,
+            hover_transitions: 0,
+            permission_cards_shown: 0,
+            permission_decisions_recorded: 0,
+            ptt_activations: 0,
+            kill_switch_trips: 0,
+            frames_rendered: 0,
+            hotkeys_registered: true,
+            window_alive: true,
+        })
+    }
+
+    pub(crate) fn clone_for_monitor(&self, monitor: MonitorDescriptor) -> Result<Self, UiError> {
+        let pill_fsm = PillHoverStateMachine::new(monitor.clone(), TOP_MARGIN_DEFAULT_PX)?;
+        let reloader = self.reloader.clone();
+        let voice = VoiceInteractionController::new_default(self.avatar_dir.clone());
+        let kill_switch = UiKillSwitchManager::new();
+        let profile = default_ui_gatekeeper_profile(r"C:\miku-demo-sandbox");
+        let gatekeeper = GatekeeperEngine::new(profile)
+            .map_err(|e| UiError::DemoModeError(format!("demo Gatekeeper init error: {}", e)))?;
+        let temp_audit_dir = create_unique_isolated_audit_temp_dir("miku_demo_ephemeral", 0)?;
+        let audit_store = PersistentJsonlAuditStore::open(&temp_audit_dir, 256 * 1024, 3)?;
+        let bridge = WebView2IpcBridge::new()?;
+        let mut sandbox = DemoSandboxGuard::new_strict();
+        let banner = sandbox.format_demo_labeled_text(
+            "Miku Island Ready · Hover=Peek | Click=Y/N Card | Alt+Space=PTT | Ctrl+Alt+Shift+K=KillSwitch | Esc=Exit",
+        );
+
+        Ok(Self {
+            avatar_dir: self.avatar_dir.clone(),
             temp_audit_dir,
             monitor,
             pill_fsm,
@@ -376,12 +417,12 @@ impl DemoInteractiveController {
     ) -> Result<DemoSessionReport, UiError> {
         #[cfg(target_os = "windows")]
         {
-            win32_demo_runner::execute_win32_demo_session(&self.avatar_dir, options)
+            win32_demo_runner::execute_win32_demo_session(self, options)
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let mut ctrl = self.clone_for_monitor(self.monitor.clone())?;
             let t0 = Instant::now();
-            let mut ctrl = Self::new(self.avatar_dir.clone(), self.monitor.clone())?;
             let startup_latency_ms = t0.elapsed().as_secs_f64() * 1_000.0;
             let anchor = ctrl.pill_geometry();
             let _ = ctrl.step_hover_enter(anchor.center_x(), anchor.y + 16, 1_000)?;
@@ -395,4 +436,3 @@ impl DemoInteractiveController {
         }
     }
 }
-

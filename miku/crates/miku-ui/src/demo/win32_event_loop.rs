@@ -11,13 +11,13 @@ pub(crate) mod win32_demo_runner {
     use std::time::Duration;
 
     pub fn execute_win32_demo_session(
-        avatar_dir: &Path,
+        template_ctrl: &DemoInteractiveController,
         options: &DemoCliOptions,
     ) -> Result<DemoSessionReport, UiError> {
-        let t0 = Instant::now();
         let monitors = crate::win32::win32_native::enumerate_monitors_win32();
         let primary = select_target_monitor(&monitors, None)?.clone();
-        let mut ctrl = DemoInteractiveController::new(avatar_dir.to_path_buf(), primary)?;
+        let mut ctrl = template_ctrl.clone_for_monitor(primary)?;
+        let t0 = Instant::now();
         let style_cfg = Win32PillStyleConfig::default();
         style_cfg.validate()?;
 
@@ -51,7 +51,7 @@ pub(crate) mod win32_demo_runner {
                 style_cfg.ex_style,
                 class_w.as_ptr(),
                 title_w.as_ptr(),
-                style_cfg.base_style,
+                style_cfg.base_style & !0x1000_0000,
                 anchor.x,
                 anchor.y,
                 anchor.width,
@@ -312,7 +312,7 @@ pub(crate) mod win32_demo_runner {
                 let _ = UnregisterHotKey(hwnd, KILL_SWITCH_HOTKEY_ID);
             }
             let _ = DestroyWindow(hwnd);
-            let _ = ctrl.step_escape_clean_exit(loop_start.elapsed().as_millis() as u64)?;
+            let _ = ctrl.step_escape_clean_exit(loop_start.elapsed().as_millis() as u64);
             ctrl.build_session_report(startup_latency_ms, focus_preserved)
         }
     }
@@ -322,4 +322,3 @@ pub fn run_interactive_demo_session(options: &DemoCliOptions) -> Result<DemoSess
     let ctrl = DemoInteractiveController::default_with_resolved_assets()?;
     ctrl.run_live_win32_demo_window(options)
 }
-

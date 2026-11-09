@@ -214,6 +214,7 @@ pub struct HotReloadMetrics {
     pub spring_count: usize,
 }
 
+#[derive(Debug, Clone)]
 pub struct AvatarPackHotReloader {
     pub(crate) base_avatar_dir: PathBuf,
     pub(crate) runtime: ProductionAvatarRuntime,

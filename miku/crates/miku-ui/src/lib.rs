@@ -16,7 +16,7 @@
 //! Micro-step 2.12 (Principle 8 · Modular Boundaries):
 //! This crate root acts as an isomorphic public facade (`pub mod` + `pub use`) over 8 cohesive
 //! domain modules (`win32`, `avatar`, `webview`, `gatekeeper`, `audit`, `voice`, `power`, `demo`),
-//! where every source file in the domain hierarchy is strictly `< 600` lines.
+//! where every source file in `miku/crates/miku-ui/src/` (including `main.rs`) is strictly `< 600` lines.
 
 pub use miku_gatekeeper::{
     AuditEntry, CanonicalPathJail, Capability, DenyReason, GatekeeperEngine, GatekeeperVerdict,
@@ -162,18 +162,7 @@ mod tests {
             "demo",
         ];
 
-        // 1. Check lib.rs itself is < 600 lines
-        let lib_rs = src_dir.join("lib.rs");
-        let lib_content = fs::read_to_string(&lib_rs).expect("read src/lib.rs");
-        let lib_lines = lib_content.lines().count();
-        assert!(
-            lib_lines > 0 && lib_lines < 600,
-            "src/lib.rs must be < 600 lines, got {}",
-            lib_lines
-        );
-
-        // 2. Check all 8 domain directories exist and every .rs file inside them is < 600 lines
-        let mut total_checked_files = 1usize;
+        // 1. Check all 8 domain directories exist with mod.rs
         for domain in expected_domains {
             let domain_dir = src_dir.join(domain);
             assert!(
@@ -186,26 +175,51 @@ mod tests {
                 "Expected src/{}/mod.rs to exist",
                 domain
             );
+        }
 
-            for entry in fs::read_dir(&domain_dir).expect("read domain dir") {
+        // 2. Recursively walk every .rs file under src/ (including lib.rs, main.rs, and all submodules)
+        let mut stack = vec![src_dir.clone()];
+        let mut total_checked_files = 0usize;
+        let mut max_lines_observed = 0usize;
+        let mut max_lines_file = String::new();
+
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).expect("read src dir") {
                 let entry = entry.expect("dir entry");
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                    let text = fs::read_to_string(&path).expect("read module file");
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                    let text = fs::read_to_string(&path).expect("read .rs source file");
                     let count = text.lines().count();
+                    let rel = path
+                        .strip_prefix(&src_dir)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string();
+                    if count > max_lines_observed {
+                        max_lines_observed = count;
+                        max_lines_file = rel.clone();
+                    }
                     assert!(
                         count > 0 && count < 600,
-                        "Module file {} exceeded 600-line budget: {} lines",
-                        path.display(),
+                        "Source file src/{} exceeded 600-line budget: {} lines",
+                        rel,
                         count
                     );
                     total_checked_files += 1;
                 }
             }
         }
+
+        println!(
+            "[MODULAR-2.12] checked_files={} max_lines={} ({})",
+            total_checked_files, max_lines_observed, max_lines_file
+        );
+
         assert!(
             total_checked_files >= 40,
-            "Expected at least 40 modular .rs files across the 8 domains, checked {}",
+            "Expected at least 40 modular .rs files across src/, checked {}",
             total_checked_files
         );
     }
@@ -234,7 +248,7 @@ mod tests {
         let avatar_dir = resolve_avatar_assets_dir();
         let mut reloader = AvatarPackHotReloader::new(&avatar_dir).unwrap();
         let avatar_rt = reloader.runtime_mut();
-        avatar_rt.trigger_event_impulse(&UiInteractionKind::HoverEnter, 0.45);
+        avatar_rt.physics.apply_mood_impulse(AvatarMood::Happy);
         let (_, settled_fps) = avatar_rt.step_to_rest(1.0 / 60.0, 240);
         assert_eq!(settled_fps, 0);
 

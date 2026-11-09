@@ -11,6 +11,7 @@ members = [
     "crates/miku-platform",
     "crates/miku-cli",
     "crates/miku-ui",
+    "crates/miku-mcp",
 ]
 
 [workspace.package]
