@@ -1094,7 +1094,7 @@ const COMPLETE_MASTER_PLAN_PHASES: PhaseItem[] = [
         phaseId: 3,
         title: 'Memoria en Markdown + índice SQLite FTS5 e historial buscable de sesiones (F-10, F-23)',
         objective: 'Guardar la memoria a largo plazo en archivos Markdown legibles como fuente de verdad e indexarlos junto al historial de sesiones (sessions y conversation_turns) en SQLite FTS5 con sincronización incremental por hash SHA-256, autorización Gatekeeper en cada operación, buscador instantáneo en la Island (Ctrl+K) en < 10 ms y recuperación selectiva bajo demanda dentro del presupuesto de tokens.',
-        deliverable: 'Módulos MarkdownMemoryVault (miku-memory/src/markdown_vault.rs, 526 líneas < 600) e IslandMemorySearchController (miku-memory/src/island_search_ipc.rs, 339 líneas < 600) + suite TDD memory_search_tests.rs (498 líneas < 600, LEDGER-3.9-1..6) + docs/design/F-10.md y docs/design/F-23.md.',
+        deliverable: 'Módulos MarkdownMemoryVault (miku-memory/src/markdown_vault.rs, 592 líneas < 600) e IslandMemorySearchController (miku-memory/src/island_search_ipc.rs, 334 líneas < 600) + suite TDD memory_search_tests.rs (497 líneas < 600, LEDGER-3.9-1..6) + docs/design/F-10.md y docs/design/F-23.md.',
         testsFirst: [
           'Benchmark/Integración (LEDGER-3.9-1): test_index_500_markdown_notes_and_session_records_bm25_ranking_and_warmed_search_under_10ms (indexa 500 notas Markdown + 30 registros de sesión en directorio/DB temporal aislado, verifica ranking BM25 y mide búsqueda local < 10.0 ms con 5 calentamientos + 25 muestras p50/p95)',
           'Incremental/SHA-256 (LEDGER-3.9-2): test_markdown_edit_sha256_incremental_sync_skips_intact_docs_and_purges_deleted_notes (editar 1 .md reindexa solo el archivo modificado mientras los intactos mantienen 0 reindexados; eliminar nota purga resultados obsoletos; reconstrucción total desde .md)',
@@ -1114,8 +1114,8 @@ const COMPLETE_MASTER_PLAN_PHASES: PhaseItem[] = [
         budgetAffected: 'Búsqueda local FTS5 < 10.0 ms con 500 notas y sesiones · 0 reindexados en archivos .md intactos · Presupuesto de tokens de contexto respetado',
         risksAndMitigation: 'Índice FTS5 desincronizado si el usuario edita o borra un Markdown a mano -> sincronización incremental por hash SHA-256 (sync_vault_directory) y reconstrucción completa desde .md (rebuild_fts5_index_from_sources).',
         dependencies: ['1.4', '1.5', '1.6', '3.8'],
-        definitionOfDone: '6 tests verdes en LEDGER-3.9-1..6 + clippy -D warnings limpio + archivos .rs nuevos < 600 líneas + docs/design/F-10.md y F-23.md -> PENDIENTE-LOCAL de salida real en Windows 11',
-        status: 'PENDIENTE',
+        definitionOfDone: 'Evidencia parcial recibida en Windows 11: 16/16 en pruebas focales de 3.9 y crates afectados (miku-memory + miku-storage, búsqueda FTS5 < 10 ms), miku-agent serial 43/43 lib + 1/1 bin + 2/2 TLS individuales, miku-cli (< NUL) 14/14 lib + 1/1 bin + 1/1 miku-license-audit, workspace (< NUL) 166 tests con 0 fallos reportados (+ doc-tests con 0 casos), clippy -D warnings limpio, npm run lint limpio y Cockpit 5/5 -> PENDIENTE-LOCAL únicamente de confirmar explícitamente $LASTEXITCODE == 0 del proceso de workspace (y métricas numéricas exactas p50/p95 ms de BENCH-3.9 si se desean registrar)',
+        status: 'PENDIENTE-LOCAL',
         verifiedAt: null,
       },
       {
@@ -1555,20 +1555,20 @@ const COMPLETE_MASTER_PLAN_PHASES: PhaseItem[] = [
 export const PROJECT_STATE: ProjectStateData = {
   meta: {
     productName: 'Miku Desktop Orchestrator',
-    planVersion: 'v2.0 · Compuerta D (Fase 0..2 100% [29/58] · Pasos 3.1..3.8 VERIFICADOS [37/58 = 63.8%] · Paso 3.9 ESCRITO / PENDIENTE-LOCAL)',
+    planVersion: 'v2.0 · Compuerta D (Fase 0..2 100% [29/58] · Pasos 3.1..3.8 VERIFICADOS [37/58 = 63.8%] · Paso 3.9 PENDIENTE-LOCAL de confirmar $LASTEXITCODE == 0 en workspace)',
     repoVersion: '0.1.0-pre',
     lastUpdated: '2026-11-08',
     activeGate: 'D',
-    activeGateTitle: 'Compuerta D · Ejecución TDD · Fase 3 · Micro-paso 3.9 ESCRITO / PENDIENTE-LOCAL (37/58 = 63.8% verificados · Fase 3: 8/13 = 61.5%)',
-    nextGateTitle: 'Verificación local en Windows 11 del Micro-paso 3.9 (LEDGER-3.9-1..6) antes de 3.10',
-    currentPhaseLabel: 'Fase 3 · Agentes, MCP & Skills Hot-Reload (61.5% verificada · 8/13 pasos · Paso 3.8 VERIFICADO · Paso 3.9 en verificación local)',
+    activeGateTitle: 'Compuerta D · Ejecución TDD · Fase 3 · Micro-paso 3.9 PENDIENTE-LOCAL (37/58 = 63.8% verificados · Fase 3: 8/13 = 61.5%)',
+    nextGateTitle: 'Confirmar $LASTEXITCODE == 0 de cargo test --workspace en Windows 11 para cerrar 3.9 antes de 3.10',
+    currentPhaseLabel: 'Fase 3 · Agentes, MCP & Skills Hot-Reload (61.5% verificada · 8/13 pasos · Paso 3.8 VERIFICADO · Paso 3.9 PENDIENTE-LOCAL de $LASTEXITCODE == 0)',
     currentStepId: '3.9',
     summaryFiveLines: [
-      '1. Micro-paso 3.9 (F-10, F-23) implementado en miku-memory y miku-storage con 6 tests TDD (LEDGER-3.9-1..6) en estado PENDIENTE-LOCAL hasta recibir salida real en Windows 11.',
-      '2. Progreso verificado: 37 / 58 micro-pasos verificados (63.8% total · Fase 0..2: 100% [29/29] · Fase 3: 8/13 pasos verificados = 61.5%; no se avanza al 3.10).',
-      '3. Memoria en Markdown (MarkdownMemoryVault, 526 líneas < 600): notas .md legibles como fuente de verdad, sincronización incremental por hash SHA-256 (0 reindexados en intactos), purga de eliminados y reconstrucción total en SQLite FTS5.',
-      '4. Buscador Ctrl+K en la Island (IslandMemorySearchController, 339 líneas < 600) y sesiones en FTS5: flujo Ctrl+K -> IPC JSON -> búsqueda BM25 < 10 ms sobre 500 notas + sesiones -> resultados acotados (<= 25) sin devolver el corpus completo.',
-      '5. Seguridad y tokens: Gatekeeper (Capability::FsRead / FsWrite) autoriza cada archivo (0 lecturas y 0 resultados si deniega), sanitización FTS5/SQL e inyección selectiva bajo demanda respetando max_budget_tokens.',
+      '1. Micro-paso 3.9 (F-10, F-23) ejecutado en Windows 11 (16/16 en miku-memory + miku-storage, 166 tests en workspace con 0 fallos reportados, clippy -D warnings limpio, npm run lint y Cockpit 5/5); se mantiene en PENDIENTE-LOCAL hasta confirmar explícitamente $LASTEXITCODE == 0 del proceso de workspace.',
+      '2. Progreso verificado: 37 / 58 micro-pasos verificados (63.8% total · Fase 0..2: 100% [29/29] · Fase 3: 8/13 pasos verificados = 61.5%; 3.10 permanece PENDIENTE y sin iniciar).',
+      '3. Memoria en Markdown (MarkdownMemoryVault, 592 líneas < 600): notas .md legibles como fuente de verdad, sincronización incremental por hash SHA-256 (0 reindexados en intactos), purga de eliminados y reconstrucción total en SQLite FTS5.',
+      '4. Buscador Ctrl+K en la Island (IslandMemorySearchController, 334 líneas < 600) y sesiones en FTS5: flujo Ctrl+K -> IPC JSON -> búsqueda BM25 filtrada antes de truncar (search_fts5_filtered) < 10 ms sobre 500 notas + sesiones -> resultados acotados (<= 25) sin devolver el corpus completo.',
+      '5. Evidencia pendiente para promover 3.9 a VERIFICADO (38/58): confirmación explícita de $LASTEXITCODE == 0 en cargo test --manifest-path miku/Cargo.toml --workspace (con stdin < NUL) y, opcionalmente, los valores numéricos exactos p50/p95 (ms) impresos por BENCH-3.9.',
     ],
   },
 
@@ -1599,7 +1599,7 @@ export const PROJECT_STATE: ProjectStateData = {
       name: 'Compuerta D: Ejecución TDD',
       subtitle: 'EN CURSO (37/58 verificados · 63.8% global · Fase 0..2 100% [29/29] · Fase 3 Pasos 3.1..3.8 VERIFICADOS [8/13 = 61.5%] · Paso 3.9 PENDIENTE-LOCAL)',
       status: 'EN_CURSO',
-      approvalCommandHint: 'Ejecuta en Windows 11 los comandos de verificación de miku-memory (LEDGER-3.9-1..6), workspace y clippy, y pega la salida real.',
+      approvalCommandHint: 'Confirma explícitamente $LASTEXITCODE == 0 para cargo test --manifest-path miku/Cargo.toml --workspace (< NUL) en Windows 11 (y opcionalmente p50/p95 ms exactos de BENCH-3.9).',
     },
   ],
 
@@ -3729,8 +3729,8 @@ export const PROJECT_STATE: ProjectStateData = {
       kind: 'benchmark',
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-08',
-      command: 'cargo test --manifest-path miku/Cargo.toml -p miku-memory memory_search_tests:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: indexa 500 notas Markdown + 30 registros de sesión en directorio temporal aislado, verifica ranking BM25 y mide búsqueda local < 10.0 ms con 5 iteraciones de calentamiento + 25 muestras (p50/p95). Pendiente de ejecución en Windows 11.',
+      command: 'cargo test --manifest-path miku/Cargo.toml -p miku-memory -p miku-storage -- --nocapture',
+      evidenceNote: 'PENDIENTE-LOCAL (pasa en Windows 11: 16/16 en pruebas focales de 3.9 y crates afectados miku-memory + miku-storage; búsqueda local FTS5 sobre 500 notas + 30 sesiones dentro del presupuesto < 10.0 ms; valores numéricos exactos p50/p95 ms no inventados; workspace < NUL reporta 166 tests con 0 fallos, pendiente de confirmar explícitamente $LASTEXITCODE == 0).',
     },
     {
       id: 'LEDGER-3.9-2',
@@ -3741,7 +3741,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-08',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-memory memory_search_tests:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: verifica sincronización incremental por hash SHA-256 al editar un archivo .md (1 reindexado, intactos con 0 reindexados), purga de notas eliminadas sin resultados obsoletos y reconstrucción íntegra de FTS5 desde los archivos Markdown.',
+      evidenceNote: 'PENDIENTE-LOCAL (pasa en Windows 11: 6/6 en memory_search_tests y 16/16 en miku-memory + miku-storage; sincronización incremental SHA-256 reindexa solo el .md modificado con 0 reindexados en intactos, purga notas eliminadas y reconstruye FTS5 desde disco; pendiente de confirmar explícitamente $LASTEXITCODE == 0 del workspace).',
     },
     {
       id: 'LEDGER-3.9-3',
@@ -3752,7 +3752,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-08',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-memory memory_search_tests:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: verifica ranking BM25 multi-término, consultas vacías/malformadas y sanitización de caracteres especiales y operadores FTS5/SQL sin pánicos ni corrupción.',
+      evidenceNote: 'PENDIENTE-LOCAL (pasa en Windows 11: 6/6 en memory_search_tests y 16/16 en miku-memory + miku-storage; ranking BM25 multi-término, consultas vacías/malformadas y sanitización de operadores FTS5/SQL sin pánicos ni corrupción; pendiente de confirmar explícitamente $LASTEXITCODE == 0 del workspace).',
     },
     {
       id: 'LEDGER-3.9-4',
@@ -3763,7 +3763,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-08',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-memory memory_search_tests:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: verifica que cada lectura/escritura/búsqueda pasa por Gatekeeper (Capability::FsRead / FsWrite); cuando Gatekeeper deniega, disk_reads_performed permanece en 0 y se devuelven 0 resultados.',
+      evidenceNote: 'PENDIENTE-LOCAL (pasa en Windows 11: 6/6 en memory_search_tests y 16/16 en miku-memory + miku-storage; Gatekeeper Capability::FsRead / FsWrite autoriza cada archivo y ante denegación realiza 0 lecturas de disco y devuelve 0 resultados; pendiente de confirmar explícitamente $LASTEXITCODE == 0 del workspace).',
     },
     {
       id: 'LEDGER-3.9-5',
@@ -3774,7 +3774,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-08',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-memory memory_search_tests:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: verifica que retrieve_on_demand_within_budget inyecta solo los fragmentos pertinentes respetando max_budget_tokens (SystemPromptAssembler) y omite la memoria en saludos casuales (0 tokens RAG).',
+      evidenceNote: 'PENDIENTE-LOCAL (pasa en Windows 11: 6/6 en memory_search_tests y 16/16 en miku-memory + miku-storage; retrieve_on_demand_within_budget inyecta solo fragmentos pertinentes dentro de max_budget_tokens y 0 tokens RAG en charla casual; pendiente de confirmar explícitamente $LASTEXITCODE == 0 del workspace).',
     },
     {
       id: 'LEDGER-3.9-6',
@@ -3785,7 +3785,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-08',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-memory memory_search_tests:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: verifica el flujo de extremo a extremo Ctrl+K -> IPC JSON-RPC -> búsqueda FTS5 filtrada (All, MarkdownOnly, SessionsOnly) -> resultados acotados (<= 25) en la Island sin devolver el corpus completo y rechazo de orígenes no confiables.',
+      evidenceNote: 'PENDIENTE-LOCAL (pasa en Windows 11 tras aplicar search_fts5_filtered / search_authorized_filtered antes del límite: 6/6 en memory_search_tests y 16/16 en miku-memory + miku-storage; flujo Ctrl+K -> IPC JSON-RPC -> FTS5 filtrado para All, MarkdownOnly y SessionsOnly con resultados acotados <= 25; pendiente de confirmar explícitamente $LASTEXITCODE == 0 del workspace).',
     },
   ],
 
@@ -4319,15 +4319,16 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
-      version: 'Compuerta D · Paso 3.9 Código, Documentación F-10/F-23 y 6 Tests TDD Entregados (ESCRITO / PENDIENTE-LOCAL)',
+      version: 'Compuerta D · Paso 3.9 Registro de Evidencia en Windows 11 Actualizado (PENDIENTE-LOCAL de confirmar $LASTEXITCODE == 0 en workspace)',
       date: '2026-11-08',
       gate: 'Compuerta D (Fase 3 · Paso 3.8 VERIFICADO [37/58 = 63.8%] -> Paso 3.9 PENDIENTE-LOCAL)',
       summary:
-        'Implementado el Micro-paso 3.9 (F-10 y F-23: Memoria de largo plazo en archivos Markdown legibles + índice SQLite FTS5 e historial buscable de sesiones con Ctrl+K en la Island) reutilizando SingleThreadStoragePool (miku-storage), ContextEngine / SystemPromptAssembler (miku-memory) y GatekeeperEngine (miku-gatekeeper): (1) MarkdownMemoryVault (miku/crates/miku-memory/src/markdown_vault.rs, 526 líneas < 600) gestiona notas .md como fuente de verdad única, indexa el historial de sesiones (sessions y conversation_turns), detecta ediciones mediante hash SHA-256 sin reindexar documentos intactos (skipped_unchanged_files), purga notas eliminadas y permite reconstruir íntegramente el índice FTS5 desde disco; (2) cada lectura, escritura y búsqueda exige autorización de Gatekeeper (Capability::FsRead / FsWrite), realizando 0 lecturas y devolviendo 0 resultados si se deniega; (3) retrieve_on_demand_within_budget recupera e inyecta solo fragmentos relevantes cuando la consulta lo requiere respetando max_budget_tokens; (4) IslandMemorySearchController (miku/crates/miku-memory/src/island_search_ipc.rs, 339 líneas < 600) implementa el flujo Ctrl+K -> IPC JSON-RPC -> búsqueda BM25 < 10 ms -> resultados acotados (<= 25) sin devolver el corpus completo; (5) SingleThreadStoragePool::search_fts5 incorpora escaneo léxico con buffer reutilizable sin asignaciones por token; (6) se entregan las 6 pruebas TDD en memory_search_tests.rs (498 líneas < 600, LEDGER-3.9-1..6) y los diseños docs/design/F-10.md y docs/design/F-23.md.',
+        'Registrada la evidencia real de Windows 11 para el Micro-paso 3.9 (F-10 y F-23): (1) pruebas focales de 3.9 y crates afectados (miku-memory + miku-storage): 16/16 pasan con búsqueda local FTS5 dentro del presupuesto < 10 ms; (2) miku-agent en serie (--test-threads=1) excluyendo los dos tests TLS: 43/43 de biblioteca y 1/1 de binario pasan, y los dos tests TLS ejecutados individualmente pasan 1/1 cada uno; (3) miku-cli con stdin redirigido a NUL: 14/14 de biblioteca, 1/1 de binario y 1/1 de miku-license-audit pasan; (4) cargo test --manifest-path miku/Cargo.toml --workspace con stdin redirigido a NUL: todos los targets reportan 0 fallos (conteo derivado: 166 tests, más doc-tests sin casos); (5) cargo clippy --manifest-path miku/Cargo.toml --workspace --all-targets -- -D warnings pasa limpio, npm run lint pasa y Cockpit pasa 5/5. Dado que la salida capturada del workspace no muestra explícitamente el código final de salida ($LASTEXITCODE) y no se infieren códigos de salida ni valores numéricos ausentes, el Paso 3.9 y LEDGER-3.9-1..6 permanecen en PENDIENTE-LOCAL (progreso global 37/58 = 63.8%, Fase 3: 8/13 = 61.5%, Paso 3.10 PENDIENTE y sin iniciar) hasta confirmar explícitamente $LASTEXITCODE == 0.',
       highlights: [
-        '6 tests TDD del Micro-paso 3.9 escritos en miku/crates/miku-memory/src/memory_search_tests.rs (LEDGER-3.9-1 a LEDGER-3.9-6) en estado PENDIENTE-LOCAL hasta su ejecución en Windows 11.',
-        'Todos los archivos .rs nuevos cumplen estrictamente < 600 líneas (markdown_vault.rs: 526, island_search_ipc.rs: 339, memory_search_tests.rs: 498).',
-        'Documentación de diseño publicada en docs/design/F-10.md y docs/design/F-23.md.',
+        '16/16 tests verdes en pruebas focales de 3.9 y crates afectados (miku-memory + miku-storage), con búsqueda local FTS5 < 10 ms.',
+        'miku-agent serial (43/43 lib + 1/1 bin + 1/1 y 1/1 en los dos tests TLS individuales) y miku-cli con < NUL (14/14 lib + 1/1 bin + 1/1 miku-license-audit) verificados en Windows 11.',
+        'Workspace con < NUL: 166 tests ejecutados con 0 fallos reportados en todos los targets (+ doc-tests sin casos), Clippy -D warnings limpio, npm run lint limpio y Cockpit 5/5.',
+        '3.9 se mantiene en PENDIENTE-LOCAL en cumplimiento estricto de no inferir un $LASTEXITCODE ausente; archivos .rs nuevos cumplen < 600 líneas (markdown_vault.rs: 592, island_search_ipc.rs: 334, memory_search_tests.rs: 497).',
       ],
     },
     {
@@ -5201,22 +5202,22 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-memory/src/markdown_vault.rs',
       kind: 'file',
-      description: 'MarkdownMemoryVault (526 líneas < 600): notas .md legibles en disco, sincronización incremental SHA-256 (0 reindexados en intactos), purga de eliminados, indexación de sesiones, reconstrucción total FTS5, Gatekeeper FsRead/FsWrite y recuperación selectiva bajo demanda',
-      deliveredInCurrentTurn: true,
+      description: 'MarkdownMemoryVault (592 líneas < 600): notas .md legibles en disco, sincronización incremental SHA-256 (0 reindexados en intactos), purga de eliminados, indexación de sesiones, reconstrucción total FTS5, Gatekeeper FsRead/FsWrite, search_authorized_filtered y recuperación selectiva bajo demanda',
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-memory/src/island_search_ipc.rs',
       kind: 'file',
-      description: 'IslandMemorySearchController (339 líneas < 600): atajo Ctrl+K, contrato IPC JSON-RPC, validación de origen, sanitización FTS5, acotación de resultados (<= 25) y redacción de secretos/rutas sensibles',
-      deliveredInCurrentTurn: true,
+      description: 'IslandMemorySearchController (334 líneas < 600): atajo Ctrl+K, contrato IPC JSON-RPC (JSONRPC_VERSION_2_0 + MIKU_PROTOCOL_VERSION_V1), validación de origen, filtrado previo al límite (search_authorized_filtered), acotación de resultados (<= 25) y redacción de secretos/rutas sensibles',
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-memory/src/memory_search_tests.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 3.9 (498 líneas < 600): 6 pruebas LEDGER-3.9-1..6 (500 notas + sesiones < 10 ms con calentamiento + 25 muestras, sync incremental SHA-256, sanitización BM25, Gatekeeper, presupuesto RAG e IPC Ctrl+K)',
-      deliveredInCurrentTurn: true,
+      description: 'Suite TDD del Paso 3.9 (497 líneas < 600): 6 pruebas LEDGER-3.9-1..6 que pasan en Windows 11 (16/16 con miku-storage; en PENDIENTE-LOCAL hasta confirmar $LASTEXITCODE == 0 del workspace)',
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
