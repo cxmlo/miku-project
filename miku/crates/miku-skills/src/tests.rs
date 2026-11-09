@@ -65,14 +65,27 @@ pub(crate) fn build_test_gatekeeper(project_root: &str) -> GatekeeperEngine {
             effect: PolicyEffect::Deny,
             pc_only: false,
         },
+    ];
+    GatekeeperEngine::new(profile).expect("valid GatekeeperEngine")
+}
+
+pub(crate) fn build_network_denied_gatekeeper(project_root: &str) -> GatekeeperEngine {
+    let mut profile = ProjectProfile::new("miku-skills-net-denied", project_root, 30_000);
+    profile.rules = vec![
         PolicyRule {
-            capability: Capability::ProcessKill,
+            capability: Capability::FsRead,
+            pattern: "*".to_string(),
+            effect: PolicyEffect::Allow,
+            pc_only: false,
+        },
+        PolicyRule {
+            capability: Capability::Network,
             pattern: "*".to_string(),
             effect: PolicyEffect::Deny,
             pc_only: false,
         },
     ];
-    GatekeeperEngine::new(profile).expect("valid GatekeeperEngine")
+    GatekeeperEngine::new(profile).expect("valid GatekeeperEngine with Network Deny rule")
 }
 
 // ============================================================================
@@ -159,12 +172,18 @@ capabilities = ["fs_read"]
         );
     }
 
-    // 4. Unknown capability rejected
-    let unknown_cap_toml = valid_toml.replace("\"shell\"", "\"kernel_ring0_driver\"");
-    assert!(matches!(
-        SkillManifest::parse_and_validate(&unknown_cap_toml, &jail_root),
-        Err(SkillError::UnknownCapability(_))
-    ));
+    // 4. Unknown capability strings (including `process_kill`) rejected at manifest parse time
+    for unknown_cap in ["process_kill", "kernel_ring0_driver"] {
+        let unknown_cap_toml = valid_toml.replace("\"shell\"", &format!("\"{}\"", unknown_cap));
+        assert!(
+            matches!(
+                SkillManifest::parse_and_validate(&unknown_cap_toml, &jail_root),
+                Err(SkillError::UnknownCapability(ref cap)) if cap == unknown_cap
+            ),
+            "expected UnknownCapability('{}') at manifest parse",
+            unknown_cap
+        );
+    }
 
     // 5. Path escape outside skill directory rejected by CanonicalPathJail
     for escape_ep in [
@@ -309,7 +328,8 @@ capabilities = ["network", "shell"]
     assert_eq!(allowed_net.skill_id, "net-shell-skill");
     assert_eq!(allowed_net.capability, Capability::Network);
 
-    // 3. Skill C requesting a capability forbidden by profile (`process_kill`) -> CapabilityForbiddenByGatekeeper
+    // 3. Skill C requesting valid capability `network` against a Gatekeeper profile with a `Deny` rule on `Network`
+    let net_denied_gatekeeper = build_network_denied_gatekeeper(&root_jail);
     let skill_c_dir = temp.join("forbidden-cap-skill");
     fs::create_dir_all(&skill_c_dir).expect("create skill_c_dir");
     fs::write(skill_c_dir.join("README.md"), "# Forbidden\n").expect("write README");
@@ -320,17 +340,17 @@ schema_version = 1
 id = "forbidden-cap-skill"
 name = "Forbidden Capability Skill"
 version = "1.0.0"
-description = "Requests process_kill which is denied by profile."
+description = "Requests network which is explicitly denied by profile."
 entrypoint = "README.md"
-capabilities = ["process_kill"]
+capabilities = ["network"]
 "#;
     fs::write(skill_c_dir.join("skill.toml"), skill_c_toml).expect("write skill.toml");
 
-    let load_c = engine.load_or_reload_from_dir(&skill_c_dir, &gatekeeper, 1_060);
+    let load_c = engine.load_or_reload_from_dir(&skill_c_dir, &net_denied_gatekeeper, 1_060);
     assert!(matches!(
         load_c,
         Err(SkillError::CapabilityForbiddenByGatekeeper {
-            capability: Capability::ProcessKill,
+            capability: Capability::Network,
             ..
         })
     ));
@@ -352,7 +372,7 @@ fn test_transactional_hot_reload_swaps_valid_update_and_preserves_active_version
 ) {
     let temp = make_temp_test_dir("ledger_3_10_3");
     let root_jail = normalize_os_path_for_jail(&temp);
-    let mut gatekeeper = build_test_gatekeeper(&root_jail);
+    let mut gatekeeper = build_network_denied_gatekeeper(&root_jail);
     let mut engine = SkillEngine::new();
 
     let skill_dir = temp.join("hot-reload-skill");
@@ -430,10 +450,10 @@ capabilities = ["fs_read"]
     assert_eq!(active_after_corrupt.manifest.version.to_string(), "1.1.0");
     assert_eq!(active_after_corrupt.reload_generation, 2);
 
-    // Step 3: Edit requesting forbidden capability (`process_kill`) is rejected and v1.1.0 remains active
+    // Step 3: Edit requesting capability forbidden by Gatekeeper Deny rule (`network`) is rejected and v1.1.0 remains active
     let forbidden_update_toml = v1_1_toml
         .replace("1.1.0", "2.0.0")
-        .replace("[\"fs_read\"]", "[\"fs_read\", \"process_kill\"]");
+        .replace("[\"fs_read\"]", "[\"fs_read\", \"network\"]");
     fs::write(skill_dir.join("skill.toml"), &forbidden_update_toml)
         .expect("write forbidden capability skill.toml");
 
@@ -441,7 +461,7 @@ capabilities = ["fs_read"]
     assert!(matches!(
         reload_forbidden,
         Err(SkillError::CapabilityForbiddenByGatekeeper {
-            capability: Capability::ProcessKill,
+            capability: Capability::Network,
             ..
         })
     ));
@@ -456,6 +476,20 @@ capabilities = ["fs_read"]
         engine.reload_diagnostics()[1].preserved_active_version,
         Some("1.1.0".to_string())
     );
+
+    // Step 4: Edit with unknown capability string (`process_kill`) is rejected at manifest parse and v1.1.0 remains active
+    let unknown_cap_update_toml = v1_1_toml
+        .replace("1.1.0", "2.1.0")
+        .replace("[\"fs_read\"]", "[\"fs_read\", \"process_kill\"]");
+    fs::write(skill_dir.join("skill.toml"), &unknown_cap_update_toml)
+        .expect("write unknown capability skill.toml");
+
+    let reload_unknown_cap = engine.load_or_reload_from_dir(&skill_dir, &gatekeeper, 2_350);
+    assert!(matches!(
+        reload_unknown_cap,
+        Err(SkillError::UnknownCapability(ref cap)) if cap == "process_kill"
+    ));
+    assert_eq!(engine.rejected_reload_count(), 3);
 
     let auth = engine
         .authorize_skill_action(

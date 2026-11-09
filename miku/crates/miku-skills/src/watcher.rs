@@ -234,7 +234,7 @@ impl SkillFsWatcher {
         {
             if self.stop_event_raw != 0 {
                 unsafe {
-                    win32_ffi::SetEvent(self.stop_event_raw as win32_ffi::HANDLE);
+                    win32_ffi::SetEvent(self.stop_event_raw as win32_ffi::Handle);
                 }
             }
         }
@@ -245,7 +245,7 @@ impl SkillFsWatcher {
         {
             if self.stop_event_raw != 0 {
                 unsafe {
-                    win32_ffi::CloseHandle(self.stop_event_raw as win32_ffi::HANDLE);
+                    win32_ffi::CloseHandle(self.stop_event_raw as win32_ffi::Handle);
                 }
                 self.stop_event_raw = 0;
             }
@@ -297,8 +297,8 @@ impl SkillFsWatcher {
             .name("miku-skills-os-watcher".to_string())
             .spawn(move || {
                 let handles = [
-                    change_raw as win32_ffi::HANDLE,
-                    stop_raw as win32_ffi::HANDLE,
+                    change_raw as win32_ffi::Handle,
+                    stop_raw as win32_ffi::Handle,
                 ];
                 while running.load(Ordering::SeqCst) {
                     let wait_rc = unsafe {
@@ -320,7 +320,7 @@ impl SkillFsWatcher {
                             timestamp_ms: 0,
                         });
                         let next_ok = unsafe {
-                            win32_ffi::FindNextChangeNotification(change_raw as win32_ffi::HANDLE)
+                            win32_ffi::FindNextChangeNotification(change_raw as win32_ffi::Handle)
                         };
                         if next_ok == 0 {
                             break;
@@ -330,7 +330,7 @@ impl SkillFsWatcher {
                     }
                 }
                 unsafe {
-                    win32_ffi::FindCloseChangeNotification(change_raw as win32_ffi::HANDLE);
+                    win32_ffi::FindCloseChangeNotification(change_raw as win32_ffi::Handle);
                 }
             })
             .map_err(|e| SkillError::WatcherError(e.to_string()))?;
@@ -347,42 +347,42 @@ impl Drop for SkillFsWatcher {
 
 #[cfg(target_os = "windows")]
 mod win32_ffi {
-    pub type HANDLE = *mut core::ffi::c_void;
-    pub type BOOL = i32;
-    pub type DWORD = u32;
-    pub type LPCWSTR = *const u16;
+    pub type Handle = *mut core::ffi::c_void;
+    pub type Bool = i32;
+    pub type Dword = u32;
+    pub type Lpcwstr = *const u16;
 
-    pub const INVALID_HANDLE_VALUE: HANDLE = (-1isize) as HANDLE;
-    pub const WAIT_OBJECT_0: DWORD = 0x0000_0000;
-    pub const INFINITE: DWORD = 0xFFFF_FFFF;
+    pub const INVALID_HANDLE_VALUE: Handle = (-1isize) as Handle;
+    pub const WAIT_OBJECT_0: Dword = 0x0000_0000;
+    pub const INFINITE: Dword = 0xFFFF_FFFF;
 
-    pub const FILE_NOTIFY_CHANGE_FILE_NAME: DWORD = 0x0000_0001;
-    pub const FILE_NOTIFY_CHANGE_DIR_NAME: DWORD = 0x0000_0002;
-    pub const FILE_NOTIFY_CHANGE_SIZE: DWORD = 0x0000_0008;
-    pub const FILE_NOTIFY_CHANGE_LAST_WRITE: DWORD = 0x0000_0010;
+    pub const FILE_NOTIFY_CHANGE_FILE_NAME: Dword = 0x0000_0001;
+    pub const FILE_NOTIFY_CHANGE_DIR_NAME: Dword = 0x0000_0002;
+    pub const FILE_NOTIFY_CHANGE_SIZE: Dword = 0x0000_0008;
+    pub const FILE_NOTIFY_CHANGE_LAST_WRITE: Dword = 0x0000_0010;
 
     #[link(name = "kernel32")]
     extern "system" {
         pub fn FindFirstChangeNotificationW(
-            lp_path_name: LPCWSTR,
-            b_watch_subtree: BOOL,
-            dw_notify_filter: DWORD,
-        ) -> HANDLE;
-        pub fn FindNextChangeNotification(h_change_handle: HANDLE) -> BOOL;
-        pub fn FindCloseChangeNotification(h_change_handle: HANDLE) -> BOOL;
+            lp_path_name: Lpcwstr,
+            b_watch_subtree: Bool,
+            dw_notify_filter: Dword,
+        ) -> Handle;
+        pub fn FindNextChangeNotification(h_change_handle: Handle) -> Bool;
+        pub fn FindCloseChangeNotification(h_change_handle: Handle) -> Bool;
         pub fn CreateEventW(
             lp_event_attributes: *const core::ffi::c_void,
-            b_manual_reset: BOOL,
-            b_initial_state: BOOL,
-            lp_name: LPCWSTR,
-        ) -> HANDLE;
-        pub fn SetEvent(h_event: HANDLE) -> BOOL;
-        pub fn CloseHandle(h_object: HANDLE) -> BOOL;
+            b_manual_reset: Bool,
+            b_initial_state: Bool,
+            lp_name: Lpcwstr,
+        ) -> Handle;
+        pub fn SetEvent(h_event: Handle) -> Bool;
+        pub fn CloseHandle(h_object: Handle) -> Bool;
         pub fn WaitForMultipleObjects(
-            n_count: DWORD,
-            lp_handles: *const HANDLE,
-            b_wait_all: BOOL,
-            dw_milliseconds: DWORD,
-        ) -> DWORD;
+            n_count: Dword,
+            lp_handles: *const Handle,
+            b_wait_all: Bool,
+            dw_milliseconds: Dword,
+        ) -> Dword;
     }
 }
