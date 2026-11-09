@@ -15,6 +15,7 @@ pub mod custom_agents_probe;
 pub mod doctor_config_and_budgets;
 pub mod doctor_probes;
 pub mod doctor_runner;
+pub mod hook_cmd;
 pub mod license_audit;
 pub mod secrets_cmd;
 
@@ -22,6 +23,7 @@ pub use custom_agents_probe::*;
 pub use doctor_config_and_budgets::*;
 pub use doctor_probes::*;
 pub use doctor_runner::*;
+pub use hook_cmd::*;
 pub use secrets_cmd::*;
 
 pub const WEBVIEW2_RUNTIME_GUID: &str = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
