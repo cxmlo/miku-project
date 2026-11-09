@@ -3301,9 +3301,9 @@ export const PROJECT_STATE: ProjectStateData = {
       name: 'session_queue_tests::test_cancel_session_queue_and_global_kill_switch_semantics_plus_benchmark',
       kind: 'benchmark',
       status: 'VERIFICADO',
-      updatedAt: '2026-11-07',
+      updatedAt: '2026-11-08',
       command: 'cargo test --release --manifest-path miku/Cargo.toml -p miku-agent test_cancel_session_queue_and_global_kill_switch -- --nocapture',
-      evidenceNote: 'VERIFICADO en Windows 11: cancelación masiva por sesión (5 órdenes), Kill Switch total (6 órdenes) y criterio estable release < 10.0 µs/mensaje cumplido (corridas medidas en release: 5.8083 µs/msg y 7.0820–9.8962 µs/msg).',
+      evidenceNote: 'VERIFICADO en Windows 11 + estabilizado BENCH-3.2 para CI: separa aserciones funcionales deterministas (verify_cancel_session_and_global_kill_switch_semantics: CancelSession 5 órdenes + Kill Switch 6 órdenes) de la medición temporal (run_warmed_multi_sample_queue_benchmark: 200 ciclos de calentamiento + 9 muestras x 200 ciclos evaluadas por mediana p50). Conserva el presupuesto real en release (< 10.0 µs/msg; medido local release: 5.8083 µs/msg y 7.0820–9.8962 µs/msg; local debug aislado: 33.962 µs/msg; runner GitHub debug con carga: 64.013 µs/msg) y evita que el ruido de debug en runners compartidos falle cargo test --workspace (+ test unitario test_bench_3_2_statistical_estimator_and_debug_release_gate_separation).',
     },
     {
       id: 'LEDGER-3.3-1',
@@ -4244,18 +4244,17 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
-      version: 'Compuerta D · Paso 3.8 VERIFICADO al 100%: Ahorro de Tokens (F-09: Ruteo Local 0-Token, Prefijo Estable KV-Cache y Topes Diarios) + Excepción de Tamaño en Preexistentes + 159 Tests Workspace',
+      version: 'Compuerta D · Paso 3.8 VERIFICADO (37/58 = 63.8%) + Estabilización Estadística de BENCH-3.2 en session_queue_tests.rs',
       date: '2026-11-08',
       gate: 'Compuerta D (Fase 3 · Paso 3.8 VERIFICADO -> Paso 3.9 Pendiente)',
       summary:
-        'Auditado y certificado en Windows 11 el Micro-paso 3.8 (F-09): 6/6 tests TDD focales en verde (LEDGER-3.8-1..6 en token_saver::), 16/16 en miku-cli, 159/159 tests verdes en el workspace en la segunda corrida, cargo clippy --workspace --all-targets -- -D warnings con 0 warnings, npm run lint limpio y 5/5 tests del Cockpit. Se ajustó la regla de tamaño de archivos de la ficha de 3.8: el límite de < 600 líneas aplica estrictamente a archivos .rs nuevos (todos los módulos nuevos de token_saver cumplen holgadamente: mod.rs 10, prefix_cache.rs 229, local_router.rs 429, tests.rs 525, budget.rs 527), mientras que para archivos preexistentes se permiten cambios pequeños y acotados aunque el archivo ya supere 600 líneas, registrando formalmente la excepción de miku-gatekeeper/src/lib.rs (1.631 líneas en Windows 11, donde únicamente se añadieron los getters de solo lectura profile() y project_name()). El Paso 3.9 queda en estado PENDIENTE y sin iniciar.',
+        'Certificado en Windows 11 el Micro-paso 3.8 (F-09: 6/6 tests focales, 16/16 en miku-cli, 159/159 en workspace, Clippy 0 warnings, excepción documentada en miku-gatekeeper/src/lib.rs de 1.631 líneas) y corregida la inestabilidad de BENCH-3.2 en miku/crates/miku-agent/src/session_queue_tests.rs (551 líneas < 600) sin tocar la lógica funcional de la cola: (1) se separan las aserciones funcionales deterministas (verify_cancel_session_and_global_kill_switch_semantics) de la medición temporal (run_warmed_multi_sample_queue_benchmark); (2) se aplica fase de calentamiento (200 ciclos) seguida de 9 muestras independientes de 200 ciclos evaluadas con mediana p50 (compute_queue_benchmark_stats); (3) se conserva intacto el presupuesto real de release (QUEUE_OVERHEAD_BUDGET_MICROS = 10.0 µs/msg) exigiéndolo en --release, mientras que en compilaciones debug (cargo test --workspace) la medición se reporta como telemetría informativa para evitar falsos fallos por contención del runner en CI (64.013 µs en GitHub Actions debug vs 33.962 µs en Windows local debug); (4) se añade el test unitario test_bench_3_2_statistical_estimator_and_debug_release_gate_separation.',
       highlights: [
-        'Paso 3.8 y LEDGER-3.8-1..6 formalmente VERIFICADOS (37/58 micro-pasos globales = 63.8% · Fase 3: 8/13 pasos = 61.5%).',
-        '6/6 tests focales de 3.8 (token_saver::), 16/16 en miku-cli y 159/159 tests del workspace en verde en la segunda corrida.',
-        'cargo clippy --workspace --all-targets -- -D warnings con 0 warnings, npm run lint limpio y Cockpit 5/5.',
-        'Regla de tamaño de archivos ajustada en 3.8: límite de 600 líneas para archivos .rs nuevos; cambios pequeños y acotados permitidos en preexistentes > 600 líneas.',
-        'Excepción documentada: miku-gatekeeper/src/lib.rs (1.631 líneas; solo se añadieron los getters de lectura profile() y project_name()).',
-        'Paso 3.9 conservado como PENDIENTE y sin iniciar.',
+        'Paso 3.8 y LEDGER-3.8-1..6 conservados como VERIFICADOS (37/58 micro-pasos globales = 63.8% · Fase 3: 8/13 pasos = 61.5%).',
+        'BENCH-3.2 (LEDGER-3.2-5) estabilizado: calentamiento (200 ciclos) + 9 muestras x 200 ciclos con estimador de mediana (p50) resistente a picos del planificador del SO.',
+        'Presupuesto real de release conservado en < 10.0 µs/mensaje (QUEUE_OVERHEAD_BUDGET_MICROS = 10.0 intacto en session_queue.rs).',
+        'Separación de aserciones funcionales deterministas y compuerta temporal (debug informativo en cargo test --workspace vs release estricto < 10.0 µs).',
+        'Nuevo test unitario test_bench_3_2_statistical_estimator_and_debug_release_gate_separation en session_queue_tests.rs (551 líneas < 600).',
       ],
     },
     {
