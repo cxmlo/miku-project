@@ -222,7 +222,7 @@ fn e2e_miku_ui_voice_interaction_ptt_wakeword_and_cancellation_20_reps_benchmark
     let _guard = lock_e2e_bench();
     let avatar_dir = resolve_avatar_assets_dir();
 
-    for _ in 0..BENCHMARK_REPETITIONS {
+    for rep in 0..BENCHMARK_REPETITIONS {
         let report =
             run_voice_interaction_loop_audit(&avatar_dir, VOICE_AUDIT_CYCLES_PER_WORKER)
                 .expect("Voice interaction loop benchmark must succeed");
@@ -250,8 +250,18 @@ fn e2e_miku_ui_voice_interaction_ptt_wakeword_and_cancellation_20_reps_benchmark
         assert_eq!(report.residual_pcm_bytes, 0);
         assert_eq!(report.idle_wave_fps, 0.0);
         assert!(report.focus_preserved_and_xss_safe);
-        assert!(report.max_soundwave_latency_ms < 50.0);
-        assert!(report.max_cancel_latency_ms < 25.0);
+        assert!(
+            report.max_soundwave_latency_ms < 50.0,
+            "rep {}: max_soundwave_latency_ms={:.3} ms >= 50.0 ms",
+            rep,
+            report.max_soundwave_latency_ms
+        );
+        assert!(
+            report.max_cancel_latency_ms < 25.0,
+            "rep {}: max_cancel_latency_ms={:.3} ms >= 25.0 ms",
+            rep,
+            report.max_cancel_latency_ms
+        );
     }
 }
 
@@ -261,7 +271,7 @@ fn e2e_miku_ui_kill_switch_reaction_latency_and_revocation_20_reps_benchmark() {
     let _guard = lock_e2e_bench();
     let avatar_dir = resolve_avatar_assets_dir();
 
-    for _ in 0..BENCHMARK_REPETITIONS {
+    for rep in 0..BENCHMARK_REPETITIONS {
         let report =
             run_kill_switch_audit(&avatar_dir, KILL_SWITCH_AUDIT_CYCLES_PER_WORKER)
                 .expect("Global Kill Switch benchmark must succeed");
@@ -297,7 +307,14 @@ fn e2e_miku_ui_kill_switch_reaction_latency_and_revocation_20_reps_benchmark() {
         assert!(report.audit_chain_verified);
         assert!(report.hotkey_fallback_verified);
         assert!(report.xss_and_focus_verified);
-        assert!(report.max_trip_latency_ms < 100.0);
+        assert!(
+            report.max_trip_latency_ms < 100.0,
+            "rep {}: max_trip_latency_ms={:.3} ms >= 100.0 ms (trips_executed={}, total_revoked_tickets={})",
+            rep,
+            report.max_trip_latency_ms,
+            report.trips_executed,
+            report.total_revoked_tickets
+        );
     }
 }
 

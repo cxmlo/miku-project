@@ -144,7 +144,7 @@ pub struct ProductionAvatarRuntime {
 impl ProductionAvatarRuntime {
     pub fn from_snapshot(
         snapshot: AvatarPackSnapshot,
-        base_avatar_dir: &Path,
+        _base_avatar_dir: &Path,
         mood: AvatarMood,
         equipped_accessories: Vec<String>,
         breath_phase_rad: f64,
@@ -152,7 +152,7 @@ impl ProductionAvatarRuntime {
         let physics = MultiSpringAvatarPhysics::from_v7_rig(&snapshot.rig)?;
         let eq_refs: Vec<&str> = equipped_accessories.iter().map(|s| s.as_str()).collect();
         let (layer_stack, accessory_transforms) =
-            compose_avatar_layer_stack(base_avatar_dir, mood, &eq_refs)?;
+            compose_avatar_layer_stack_from_rig(&snapshot.rig, mood, &eq_refs)?;
         Ok(Self {
             active_pack: snapshot,
             physics,
@@ -164,7 +164,7 @@ impl ProductionAvatarRuntime {
         })
     }
 
-    pub fn set_mood(&mut self, base_avatar_dir: &Path, mood: AvatarMood) -> Result<(), UiError> {
+    pub fn set_mood(&mut self, _base_avatar_dir: &Path, mood: AvatarMood) -> Result<(), UiError> {
         self.current_mood = mood;
         self.physics.apply_mood_impulse(mood);
         let eq_refs: Vec<&str> = self
@@ -172,7 +172,8 @@ impl ProductionAvatarRuntime {
             .iter()
             .map(|s| s.as_str())
             .collect();
-        let (layers, transforms) = compose_avatar_layer_stack(base_avatar_dir, mood, &eq_refs)?;
+        let (layers, transforms) =
+            compose_avatar_layer_stack_from_rig(&self.active_pack.rig, mood, &eq_refs)?;
         self.layer_stack = layers;
         self.accessory_transforms = transforms;
         Ok(())

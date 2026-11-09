@@ -267,6 +267,16 @@ pub fn compose_avatar_layer_stack(
     let rig: V7RigDocument = toml::from_str(&rig_raw)
         .map_err(|e| UiError::AssetCatalogError(format!("parse rig.toml: {}", e)))?;
 
+    compose_avatar_layer_stack_from_rig(&rig, mood, active_accessories)
+}
+
+/// Composes the 9 Z-index ordered layers directly from an already-validated in-memory `V7RigDocument`
+/// with zero filesystem I/O or TOML re-parsing.
+pub fn compose_avatar_layer_stack_from_rig(
+    rig: &V7RigDocument,
+    mood: AvatarMood,
+    active_accessories: &[&str],
+) -> Result<(Vec<AvatarLayerComposeNode>, BTreeMap<String, AccessorySlotTransform>), UiError> {
     let mut all_transforms = BTreeMap::new();
     for (id, item) in &rig.accessories.items {
         let tr = compute_accessory_slot_transform(id, item)?;

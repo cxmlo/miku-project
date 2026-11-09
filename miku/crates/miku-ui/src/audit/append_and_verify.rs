@@ -2,10 +2,9 @@
 use crate::prelude::*;
 
 impl PersistentJsonlAuditStore {
-    /// Appends a new tamper-evident `AuditEntry` as a single JSONL line to `audit.jsonl`,
-    /// performing transactional size rotation first if `current_file_bytes + line_len > max_file_bytes`.
-    pub fn append_entry(
+    fn stage_entry_line(
         &mut self,
+        batch_buf: &mut String,
         timestamp_ms: u64,
         agent: &str,
         capability: &str,
@@ -13,7 +12,6 @@ impl PersistentJsonlAuditStore {
         verdict: &str,
         reason: &str,
     ) -> Result<AuditEntry, UiError> {
-        let t0 = Instant::now();
         let seq = self.next_seq;
         let prev_hash = self.last_entry_hash.clone();
         let entry_hash = AuditEntry::compute_hash(
@@ -43,20 +41,37 @@ impl PersistentJsonlAuditStore {
             UiError::AuditLogIoError(format!("failed to serialize AuditEntry: {}", e))
         })?;
         serialized.push('\n');
-        let line_bytes = serialized.as_bytes();
+        let line_len = serialized.len();
 
-        if self.current_file_bytes > 0 && self.current_file_bytes + line_bytes.len() > self.max_file_bytes
+        if self.current_file_bytes + batch_buf.len() > 0
+            && self.current_file_bytes + batch_buf.len() + line_len > self.max_file_bytes
         {
+            self.flush_staged_batch(batch_buf)?;
             self.rotate_files_transactionally()?;
         }
 
-        fs::create_dir_all(&self.audit_dir).map_err(|e| {
-            UiError::AuditLogIoError(format!(
-                "failed to create audit dir '{}': {}",
-                self.audit_dir.display(),
-                e
-            ))
-        })?;
+        batch_buf.push_str(&serialized);
+        self.next_seq += 1;
+        self.last_entry_hash = entry_hash;
+        self.total_appended += 1;
+
+        Ok(entry)
+    }
+
+    fn flush_staged_batch(&mut self, batch_buf: &mut String) -> Result<(), UiError> {
+        if batch_buf.is_empty() {
+            return Ok(());
+        }
+
+        if self.current_file_bytes == 0 && !self.active_file_path.exists() {
+            fs::create_dir_all(&self.audit_dir).map_err(|e| {
+                UiError::AuditLogIoError(format!(
+                    "failed to create audit dir '{}': {}",
+                    self.audit_dir.display(),
+                    e
+                ))
+            })?;
+        }
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -69,6 +84,7 @@ impl PersistentJsonlAuditStore {
                     e
                 ))
             })?;
+        let line_bytes = batch_buf.as_bytes();
         file.write_all(line_bytes).map_err(|e| {
             UiError::AuditLogIoError(format!(
                 "failed to append JSONL line to '{}': {}",
@@ -85,9 +101,33 @@ impl PersistentJsonlAuditStore {
         })?;
 
         self.current_file_bytes += line_bytes.len();
-        self.next_seq += 1;
-        self.last_entry_hash = entry_hash;
-        self.total_appended += 1;
+        batch_buf.clear();
+        Ok(())
+    }
+
+    /// Appends a new tamper-evident `AuditEntry` as a single JSONL line to `audit.jsonl`,
+    /// performing transactional size rotation first if `current_file_bytes + line_len > max_file_bytes`.
+    pub fn append_entry(
+        &mut self,
+        timestamp_ms: u64,
+        agent: &str,
+        capability: &str,
+        target: &str,
+        verdict: &str,
+        reason: &str,
+    ) -> Result<AuditEntry, UiError> {
+        let t0 = Instant::now();
+        let mut batch_buf = String::with_capacity(256);
+        let entry = self.stage_entry_line(
+            &mut batch_buf,
+            timestamp_ms,
+            agent,
+            capability,
+            target,
+            verdict,
+            reason,
+        )?;
+        self.flush_staged_batch(&mut batch_buf)?;
 
         let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
         if elapsed_ms > self.max_append_latency_ms {
@@ -98,15 +138,18 @@ impl PersistentJsonlAuditStore {
     }
 
     /// Synchronizes any unpersisted entries from a `GatekeeperEngine`'s in-memory `TamperEvidentAuditLog`
-    /// into this persistent JSONL store.
+    /// into this persistent JSONL store using a batched write.
     pub fn sync_from_gatekeeper_log(
         &mut self,
         log: &TamperEvidentAuditLog,
     ) -> Result<usize, UiError> {
+        let t0 = Instant::now();
         let mut appended = 0usize;
+        let mut batch_buf = String::new();
         for entry in log.entries() {
             if entry.seq >= self.next_seq {
-                self.append_entry(
+                self.stage_entry_line(
+                    &mut batch_buf,
                     entry.timestamp_ms,
                     &entry.agent,
                     &entry.capability,
@@ -117,7 +160,60 @@ impl PersistentJsonlAuditStore {
                 appended += 1;
             }
         }
+        if appended > 0 {
+            self.flush_staged_batch(&mut batch_buf)?;
+            let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            if elapsed_ms > self.max_append_latency_ms {
+                self.max_append_latency_ms = elapsed_ms;
+            }
+        }
         Ok(appended)
+    }
+
+    /// Atomically synchronizes unpersisted `GatekeeperEngine` log entries and appends a new
+    /// tamper-evident `AuditEntry` in a single batched filesystem write.
+    pub fn sync_gatekeeper_and_append_entry(
+        &mut self,
+        log: &TamperEvidentAuditLog,
+        timestamp_ms: u64,
+        agent: &str,
+        capability: &str,
+        target: &str,
+        verdict: &str,
+        reason: &str,
+    ) -> Result<AuditEntry, UiError> {
+        let t0 = Instant::now();
+        let mut batch_buf = String::with_capacity(1024);
+        for entry in log.entries() {
+            if entry.seq >= self.next_seq {
+                self.stage_entry_line(
+                    &mut batch_buf,
+                    entry.timestamp_ms,
+                    &entry.agent,
+                    &entry.capability,
+                    &entry.target,
+                    &entry.verdict,
+                    &entry.reason,
+                )?;
+            }
+        }
+        let final_entry = self.stage_entry_line(
+            &mut batch_buf,
+            timestamp_ms,
+            agent,
+            capability,
+            target,
+            verdict,
+            reason,
+        )?;
+        self.flush_staged_batch(&mut batch_buf)?;
+
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        if elapsed_ms > self.max_append_latency_ms {
+            self.max_append_latency_ms = elapsed_ms;
+        }
+
+        Ok(final_entry)
     }
 
     /// Fast verifier for a single JSONL buffer, pinpointing the exact 0-based `corrupted_line_index`

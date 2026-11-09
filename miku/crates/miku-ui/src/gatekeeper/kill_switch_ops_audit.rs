@@ -44,9 +44,9 @@ impl UiKillSwitchManager {
         }
         self.pcm_zero_fills_count += 1;
 
-        // 3. Synchronize Gatekeeper's in-memory log and record explicit SHA-256 JSONL audit entry
-        let _ = audit_store.sync_from_gatekeeper_log(gatekeeper.audit_log())?;
-        let audit_entry = audit_store.append_entry(
+        // 3. Synchronize Gatekeeper's in-memory log and record explicit SHA-256 JSONL audit entry in one batched write
+        let audit_entry = audit_store.sync_gatekeeper_and_append_entry(
+            gatekeeper.audit_log(),
             now_ms,
             "kill_switch",
             "global_emergency_stop",
@@ -248,8 +248,8 @@ impl UiKillSwitchManager {
 
         // Valid token within TTL: reset Gatekeeper kill switch, restore Armed + Idle state
         gatekeeper.reset_kill_switch(now_ms);
-        let _ = audit_store.sync_from_gatekeeper_log(gatekeeper.audit_log())?;
-        let _ = audit_store.append_entry(
+        let _ = audit_store.sync_gatekeeper_and_append_entry(
+            gatekeeper.audit_log(),
             now_ms,
             "kill_switch",
             "rearm_confirm",

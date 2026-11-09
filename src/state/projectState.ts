@@ -4641,6 +4641,19 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
+      version: 'Compuerta D · Corrección Quirúrgica CI (`miku-ui`): Eliminación de I/O Redundante en `set_mood` y Escritura JSONL por Lotes en `UiKillSwitchManager::trip` (`max_trip_latency_ms < 100.0`) + Paso 3.13 en PENDIENTE-LOCAL',
+      date: '2026-11-09',
+      gate: 'Compuerta D (Fase 3 · Pasos 3.1..3.12 VERIFICADOS [41/58 = 70.7%] · Paso 3.13 PENDIENTE-LOCAL)',
+      summary:
+        'Investigado y corregido el fallo de GitHub Actions en Windows (`miku-ui --bin miku-ui` · `tests::e2e_miku_ui_kill_switch_reaction_latency_and_revocation_20_reps_benchmark` en `miku/crates/miku-ui/src/bin_e2e_tests.rs` alrededor de la línea 300: `assertion report.max_trip_latency_ms < 100.0`) sin elevar el umbral de 100.0 ms ni simular latencias: (1) en `miku/crates/miku-ui/src/webview/overview_bundle.rs` y `miku/crates/miku-ui/src/avatar/runtime_hot_reload.rs`, `ProductionAvatarRuntime::set_mood` y `from_snapshot` leían `rig.toml` desde disco (`fs::read_to_string`) y lo re-parseaban con `toml::from_str` en cada cambio de humor (dos veces dentro de cada `ks.trip()`: una al cancelar voz a `Idle` y otra al pasar a `Alert`), a pesar de que `self.active_pack.rig` ya está validado en memoria; se extrajo `compose_avatar_layer_stack_from_rig(&V7RigDocument, ...)` reduciendo las lecturas y parseos de `rig.toml` en cambios de humor a 0; (2) en `miku/crates/miku-ui/src/audit/append_and_verify.rs` y `miku/crates/miku-ui/src/gatekeeper/kill_switch_ops_audit.rs`, `sync_from_gatekeeper_log` ejecutaba `fs::create_dir_all` + `OpenOptions::open` (`CreateFileW`) + `flush` + `CloseHandle` por cada entrada individual (6 aperturas por los 3 tickets `Ask` y 3 revocaciones + 1 apertura adicional en `append_entry`), provocando picos > 100 ms bajo el minifiltro de Windows Defender (`MsMpEng.exe`) en runners virtualizados de GitHub Actions; se implementó el agrupamiento por lotes (`stage_entry_line`, `flush_staged_batch` y `sync_gatekeeper_and_append_entry`), reduciendo las aperturas de archivo en `ks.trip()` de 9 a 1 sola escritura atómica; (3) se añadió contexto diagnóstico seguro (`rep`, `max_trip_latency_ms`, `trips_executed`, `total_revoked_tickets`) al mensaje de aserción en `bin_e2e_tests.rs`. Se conserva íntegramente el Micro-paso 3.13 (`miku hook install` / `miku hook restore`) en `PENDIENTE-LOCAL`.',
+      highlights: [
+        'Causa raíz 1 corregida (`overview_bundle.rs` [539 líneas] y `runtime_hot_reload.rs` [441 líneas]): `ProductionAvatarRuntime::set_mood` ahora compone las 9 capas desde `&self.active_pack.rig` en memoria (`compose_avatar_layer_stack_from_rig`), eliminando 2 lecturas de disco y 2 parseos TOML completos de `rig.toml` en cada `ks.trip()` (y 1 en cada `voice.cancel_cooperatively()`).',
+        'Causa raíz 2 corregida (`append_and_verify.rs` [446 líneas] y `kill_switch_ops_audit.rs` [448 líneas]): `sync_from_gatekeeper_log` y `sync_gatekeeper_and_append_entry` agrupan en un único buffer y una sola llamada `OpenOptions::open` + `write_all` + `flush` todas las entradas pendientes antes de rotación, evitando 7 llamadas redundantes a `fs::create_dir_all` y 6 aperturas/cierres repetidos de `audit.jsonl` por cada disparo del Kill Switch.',
+        'Diagnóstico seguro en `bin_e2e_tests.rs` (468 líneas < 600): la aserción conserva intacto el umbral `< 100.0 ms` e informa `rep` y `max_trip_latency_ms` únicamente si falla.',
+        '59/59 archivos `.rs` en `miku-ui` se mantienen estrictamente `< 600` líneas (máximo 539 líneas en `overview_bundle.rs`); `miku/Cargo.lock` y la entrega de 3.13 permanecen intactos.',
+      ],
+    },
+    {
       version: 'Compuerta D · Paso 3.13 en PENDIENTE-LOCAL: Instalador Seguro de Hooks (`miku hook install` / `miku hook restore`) con Backup `.bak`, Diff Unificado LCS y Rollback Byte por Byte (`LEDGER-3.13-1..7`)',
       date: '2026-11-09',
       gate: 'Compuerta D (Fase 3 · Pasos 3.1..3.12 VERIFICADOS [41/58 = 70.7%] · Paso 3.13 PENDIENTE-LOCAL)',
@@ -5875,29 +5888,29 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-ui/src/avatar/',
       kind: 'dir',
-      description: 'Dominio 2 · Catálogo 22 SVGs, física de 6 resortes (0.00 fps sleep) y hot-reload < 50 ms (mod.rs, catalog.rs, physics.rs, runtime_hot_reload.rs, tests.rs · todos < 440 líneas)',
-      deliveredInCurrentTurn: false,
+      description: 'Dominio 2 · Catálogo 22 SVGs, física de 6 resortes (0.00 fps sleep) y hot-reload < 50 ms (`runtime_hot_reload.rs` actualizado a 441 líneas para componer capas en memoria con `compose_avatar_layer_stack_from_rig` sin releer `rig.toml` en `set_mood`)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/webview/',
       kind: 'dir',
-      description: 'Dominio 3 · Host WebView2 Modo C TTL, puente IPC JSON-RPC textContent y escena Overview (mod.rs + 8 submódulos · todos < 530 líneas)',
-      deliveredInCurrentTurn: false,
+      description: 'Dominio 3 · Host WebView2 Modo C TTL, puente IPC JSON-RPC textContent y escena Overview (`overview_bundle.rs` actualizado a 539 líneas con `compose_avatar_layer_stack_from_rig` en memoria)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/gatekeeper/',
       kind: 'dir',
-      description: 'Dominio 4 · Interceptor pre-ejecución, modal Y/N con TTL, anti-TOCTOU y Kill Switch global Ctrl+Alt+Shift+K (mod.rs + 6 submódulos · todos < 510 líneas)',
-      deliveredInCurrentTurn: false,
+      description: 'Dominio 4 · Interceptor pre-ejecución, modal Y/N con TTL, anti-TOCTOU y Kill Switch global Ctrl+Alt+Shift+K (`kill_switch_ops_audit.rs` [448 líneas] actualizado con `sync_gatekeeper_and_append_entry` en una sola escritura por lotes)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/audit/',
       kind: 'dir',
-      description: 'Dominio 5 · Almacén JSONL append-only, rotación transaccional por tamaño, verificador SHA-256 < 50 ms y visor seguro (mod.rs + 4 submódulos · todos < 450 líneas)',
-      deliveredInCurrentTurn: false,
+      description: 'Dominio 5 · Almacén JSONL append-only, rotación transaccional por tamaño, verificador SHA-256 < 50 ms y visor seguro (`append_and_verify.rs` [446 líneas] actualizado con escritura agrupada por lotes y sin `create_dir_all` redundante por línea)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
@@ -5924,8 +5937,8 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-ui/src/main.rs',
       kind: 'file',
-      description: 'Fachada binaria delgada (100 líneas < 600) apoyada en 6 submódulos explícitos (bin_process_tree [113], bin_worker_telemetry [353], bin_worker_probe [233], bin_coordinator_runner [431], bin_coordinator_report [440], bin_e2e_tests [438]) · 55/55 archivos .rs < 600 líneas (máximo 528) y 11 tests E2E VERIFICADOS',
-      deliveredInCurrentTurn: false,
+      description: 'Fachada binaria delgada (100 líneas < 600) apoyada en 6 submódulos explícitos (`bin_e2e_tests.rs` actualizado a 468 líneas con diagnóstico de `rep` y `max_trip_latency_ms` en la aserción `< 100.0 ms` · 59/59 archivos .rs < 600 líneas)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
