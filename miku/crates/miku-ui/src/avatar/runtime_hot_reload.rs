@@ -167,6 +167,19 @@ impl ProductionAvatarRuntime {
     pub fn set_mood(&mut self, _base_avatar_dir: &Path, mood: AvatarMood) -> Result<(), UiError> {
         self.current_mood = mood;
         self.physics.apply_mood_impulse(mood);
+        if self.layer_stack.len() == self.active_pack.rig.layers.len()
+            && !self.accessory_transforms.is_empty()
+        {
+            let pose = AvatarExpressionPose::for_mood(mood);
+            for node in &mut self.layer_stack {
+                match node.id.as_str() {
+                    "blush" => node.visible = pose.blush_visible,
+                    "brows" => node.visible = pose.brows_visible,
+                    _ => {}
+                }
+            }
+            return Ok(());
+        }
         let eq_refs: Vec<&str> = self
             .equipped_accessories
             .iter()

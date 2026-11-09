@@ -4641,6 +4641,19 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
+      version: 'Compuerta D · Corrección de Causas Raíz en Verificación Local de 3.13 (`miku-agent::harness` TCP RST + Cuelgue TLS, `hook_cmd` < 20 ms y `miku-ui` Fast-Path en `set_mood`) · Paso 3.13 en PENDIENTE-LOCAL',
+      date: '2026-11-09',
+      gate: 'Compuerta D (Fase 3 · Pasos 3.1..3.12 VERIFICADOS [41/58 = 70.7%] · Paso 3.13 PENDIENTE-LOCAL)',
+      summary:
+        'Analizados los resultados de verificación en Windows 11 del Micro-paso 3.13 y corregidas únicamente las 3 causas raíz demostradas sin elevar umbrales (`20.0 ms`, `25.0 ms`, `100.0 ms`) ni avanzar al 3.14: (1) en `miku-agent::harness` (`providers.rs`, `tests.rs`, `tests_defect_audit.rs`, `tests_tls_validation.rs` y `token_saver/tests.rs`), los 6 tests fallidos (`test_agent_harness_enforces_strict_max_steps_and_requires_confirmation`, `test_agent_harness_exhausted_keys_on_5xx_returns_clear_error_and_bounded_backoff`, `test_agent_harness_repairs_malformed_tool_json_and_fails_closed_on_irreparable`, `test_agent_harness_rotates_api_key_on_429_failover`, `test_agent_harness_multiple_tool_calls_halt_at_max_steps_and_resume_saturating`, `test_agent_harness_sanitizes_reflected_secret_in_http_error_response`) usaban `spawn_mock_http_server` + `send_loopback_http_post`; el cliente enviaba cabeceras y cuerpo en dos llamadas `write_all` separadas y leía con `read_to_end`, mientras que el servidor hacía un único `socket.read` (que leía solo las cabeceras), respondía y cerraba el socket con el cuerpo aún sin leer en `SO_RCVBUF`, haciendo que Winsock (`AFD.sys`) emitiera un `TCP RST` (`WSAECONNRESET` / OS error 10054) que abortaba la lectura del cliente; además, en `test_winhttp_rejects_untrusted_self_signed_certificate` (`tests_tls_validation.rs`), `server_task` llamaba a `socket.read` sin timeout tras enviar `ServerHello`, colgando indefinidamente la corrida serial cuando WinHTTP aborta el handshake sin enviar alerta TLS pero mantiene vivo el socket en su pool; (2) en `miku-cli::hook_cmd` (`mod.rs` [548 líneas] y `merge_and_diff.rs` [298 líneas]), `install_miku_hook` construía `CanonicalPathJail::new` (`fs::canonicalize`) dos veces, parseaba `settings.json` con `serde_json` dos veces, releía `.bak` dos veces e incluía en `elapsed_ms` el tiempo del callback `prompter.confirm_after_diff` (donde `OrderVerifyingPrompter` realiza 2 lecturas de disco extra), causando el pico puntual de `23.633 ms`; (3) en `miku-ui` (`runtime_hot_reload.rs` [453 líneas]), `ProductionAvatarRuntime::set_mood` recibió un fast-path in-place de 0 asignaciones heap que actualiza `node.visible` (`blush` y `brows`) sin clonar los 9 SVGs ni reconstruir el `BTreeMap` de 14 accesorios en cada cancelación de voz (`max_cancel_latency_ms < 25.0 ms`). El Paso 3.13 permanece en `PENDIENTE-LOCAL` (41/58 = 70.7%).',
+      highlights: [
+        'Causa raíz 1 (`miku-agent::harness` · 6 fallos + cuelgue serial): `send_loopback_http_post` (`providers.rs`, 582 líneas) unifica cabeceras + cuerpo en un único `write_all` atómico y lee exactamente hasta `Content-Length`; `spawn_mock_http_server` (`tests.rs` [552], `tests_defect_audit.rs` [560], `token_saver/tests.rs` [556]) drena todo el `Content-Length`, ejecuta `socket.shutdown().await` antes de cerrar e incorpora `MockServerGuard` (`abort()` en `Drop`); `tests_tls_validation.rs` (595 líneas) añade timeouts acotados a `accept` y `read` para impedir cuelgues infinitos.',
+        'Causa raíz 2 (`miku-cli::hook_cmd` · pico de 23.633 ms frente a < 20.0 ms): `build_config_jail` + `validate_confined_path_with_jail` (`mod.rs`, 548 líneas) reduce `fs::canonicalize` de 4 a 2 syscalls; `merge_miku_hook_settings_from_map` (`merge_and_diff.rs`, 298 líneas) evita re-parsear `settings.json`; se elimina la segunda lectura redundante de `.bak` y se descuenta `prompt_wait` de `elapsed_ms`.',
+        'Causa raíz 3 (`miku-ui` · benchmark de voz `max_cancel_latency_ms < 25.0 ms`): `ProductionAvatarRuntime::set_mood` (`runtime_hot_reload.rs`, 453 líneas) actualiza `visible` en `blush` y `brows` in-place con 0 clonaciones de Strings SVG y 0 reconstrucciones de `BTreeMap` en las 2.880 transiciones del benchmark.',
+        'Todos los archivos `.rs` modificados se mantienen estrictamente `< 600` líneas (máximo 595 líneas en `tests_tls_validation.rs`); el Paso 3.13 y `LEDGER-3.13-1..7` siguen en `PENDIENTE-LOCAL`.',
+      ],
+    },
+    {
       version: 'Compuerta D · Corrección Quirúrgica CI (`miku-ui`): Eliminación de I/O Redundante en `set_mood` y Escritura JSONL por Lotes en `UiKillSwitchManager::trip` (`max_trip_latency_ms < 100.0`) + Paso 3.13 en PENDIENTE-LOCAL',
       date: '2026-11-09',
       gate: 'Compuerta D (Fase 3 · Pasos 3.1..3.12 VERIFICADOS [41/58 = 70.7%] · Paso 3.13 PENDIENTE-LOCAL)',
@@ -5588,20 +5601,20 @@ export const PROJECT_STATE: ProjectStateData = {
       path: 'docs/user/hooks-installer.md',
       kind: 'file',
       description: 'Guía de usuario y diseño del Paso 3.13 (`miku hook install` / `miku hook restore`): backup `.bak`, diff unificado, confirmación explícita, cancelación segura y restauración byte por byte',
-      deliveredInCurrentTurn: true,
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-cli/src/hook_cmd/mod.rs',
       kind: 'file',
-      description: 'Orquestador `install_miku_hook`, `restore_miku_hook`, confinamiento `CanonicalPathJail`, evaluación `GatekeeperEngine`, `HookConfirmationPrompter` y despachador CLI `miku hook` (554 líneas < 600)',
+      description: 'Orquestador `install_miku_hook` y `restore_miku_hook` optimizado (< 20 ms): una sola instancia de `CanonicalPathJail` (`build_config_jail`), una sola verificación `.bak` y exclusión del tiempo de espera en `prompter.confirm_after_diff` (548 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-cli/src/hook_cmd/merge_and_diff.rs',
       kind: 'file',
-      description: 'Validador `validate_and_parse_settings_json` con línea exacta y redacción de secretos, fusión selectiva `merge_miku_hook_settings` y motor de diff unificado LCS `compute_unified_diff` (289 líneas < 600)',
+      description: 'Validador `validate_and_parse_settings_json`, fusión directa `merge_miku_hook_settings_from_map` sin segundo parseo JSON y motor de diff unificado LCS `compute_unified_diff` (298 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
@@ -5609,6 +5622,34 @@ export const PROJECT_STATE: ProjectStateData = {
       path: 'miku/crates/miku-cli/src/hook_cmd/tests.rs',
       kind: 'file',
       description: 'Suite TDD del Paso 3.13 (`LEDGER-3.13-1..7`) en PENDIENTE-LOCAL + auditoría de modularidad < 600 líneas (440 líneas < 600)',
+      deliveredInCurrentTurn: false,
+      status: 'Entregado (Plan/Cockpit)',
+    },
+    {
+      path: 'miku/crates/miku-agent/src/harness/providers.rs',
+      kind: 'file',
+      description: 'Adaptadores HTTP/HTTPS del arnés (`send_loopback_http_post` actualizado con escritura atómica única `request_buf` y lector determinista por `Content-Length` · 582 líneas < 600)',
+      deliveredInCurrentTurn: true,
+      status: 'Entregado (Plan/Cockpit)',
+    },
+    {
+      path: 'miku/crates/miku-agent/src/harness/tests.rs',
+      kind: 'file',
+      description: 'Suite de pruebas del arnés actualizada con `MockServerGuard` (`abort()` en `Drop`), drenado completo de `Content-Length` y `socket.shutdown().await` limpio evitando `WSAECONNRESET` en Windows (552 líneas < 600)',
+      deliveredInCurrentTurn: true,
+      status: 'Entregado (Plan/Cockpit)',
+    },
+    {
+      path: 'miku/crates/miku-agent/src/harness/tests_defect_audit.rs',
+      kind: 'file',
+      description: 'Suite de auditoría de defectos del arnés actualizada con `MockServerGuard`, drenado `Content-Length`, `socket.shutdown().await` y timeouts en `raw_listener` (560 líneas < 600)',
+      deliveredInCurrentTurn: true,
+      status: 'Entregado (Plan/Cockpit)',
+    },
+    {
+      path: 'miku/crates/miku-agent/src/harness/tests_tls_validation.rs',
+      kind: 'file',
+      description: 'Pruebas de validación TLS WinHTTP actualizadas con timeouts acotados en `accept()` y `socket.read()` para evitar bloqueo infinito cuando WinHTTP aborta ante certificado autofirmado (595 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
@@ -5846,8 +5887,8 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-agent/src/token_saver/tests.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 3.8 (525 líneas < 600): 6/6 tests LEDGER-3.8-1..6 VERIFICADOS en Windows 11 (159/159 en workspace)',
-      deliveredInCurrentTurn: false,
+      description: 'Suite TDD del Paso 3.8 actualizada en `spawn_f09_mock_server` con lectura completa de `Content-Length` y `socket.shutdown().await` limpio (556 líneas < 600)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
@@ -5888,7 +5929,7 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-ui/src/avatar/',
       kind: 'dir',
-      description: 'Dominio 2 · Catálogo 22 SVGs, física de 6 resortes (0.00 fps sleep) y hot-reload < 50 ms (`runtime_hot_reload.rs` actualizado a 441 líneas para componer capas en memoria con `compose_avatar_layer_stack_from_rig` sin releer `rig.toml` en `set_mood`)',
+      description: 'Dominio 2 · Catálogo 22 SVGs, física de 6 resortes (0.00 fps sleep) y hot-reload < 50 ms (`runtime_hot_reload.rs` actualizado a 453 líneas con fast-path in-place 0-alloc en `set_mood` para `blush` y `brows`)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
@@ -5896,21 +5937,21 @@ export const PROJECT_STATE: ProjectStateData = {
       path: 'miku/crates/miku-ui/src/webview/',
       kind: 'dir',
       description: 'Dominio 3 · Host WebView2 Modo C TTL, puente IPC JSON-RPC textContent y escena Overview (`overview_bundle.rs` actualizado a 539 líneas con `compose_avatar_layer_stack_from_rig` en memoria)',
-      deliveredInCurrentTurn: true,
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/gatekeeper/',
       kind: 'dir',
       description: 'Dominio 4 · Interceptor pre-ejecución, modal Y/N con TTL, anti-TOCTOU y Kill Switch global Ctrl+Alt+Shift+K (`kill_switch_ops_audit.rs` [448 líneas] actualizado con `sync_gatekeeper_and_append_entry` en una sola escritura por lotes)',
-      deliveredInCurrentTurn: true,
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/audit/',
       kind: 'dir',
       description: 'Dominio 5 · Almacén JSONL append-only, rotación transaccional por tamaño, verificador SHA-256 < 50 ms y visor seguro (`append_and_verify.rs` [446 líneas] actualizado con escritura agrupada por lotes y sin `create_dir_all` redundante por línea)',
-      deliveredInCurrentTurn: true,
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
@@ -5938,7 +5979,7 @@ export const PROJECT_STATE: ProjectStateData = {
       path: 'miku/crates/miku-ui/src/main.rs',
       kind: 'file',
       description: 'Fachada binaria delgada (100 líneas < 600) apoyada en 6 submódulos explícitos (`bin_e2e_tests.rs` actualizado a 468 líneas con diagnóstico de `rep` y `max_trip_latency_ms` en la aserción `< 100.0 ms` · 59/59 archivos .rs < 600 líneas)',
-      deliveredInCurrentTurn: true,
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {

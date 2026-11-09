@@ -481,11 +481,24 @@ mod tests {
             .expect("bind local test listener");
         let port = listener.local_addr().expect("local addr").port();
 
-        // Spawn mock server task that completes the server-side TLS handshake
+        // Spawn mock server task that completes the server-side TLS handshake with bounded timeouts
         let server_task = tokio::spawn(async move {
-            let (mut socket, _peer) = listener.accept().await.expect("accept connection");
+            let Ok(Ok((mut socket, _peer))) = tokio::time::timeout(
+                std::time::Duration::from_millis(2_500),
+                listener.accept(),
+            )
+            .await
+            else {
+                return;
+            };
             let mut client_hello = vec![0u8; 8192];
-            let n = socket.read(&mut client_hello).await.unwrap_or(0);
+            let n = tokio::time::timeout(
+                std::time::Duration::from_millis(1_500),
+                socket.read(&mut client_hello),
+            )
+            .await
+            .unwrap_or(Ok(0))
+            .unwrap_or(0);
             if n == 0 {
                 return;
             }
@@ -508,7 +521,13 @@ mod tests {
             }
 
             let mut client_response = vec![0u8; 4096];
-            let n2 = socket.read(&mut client_response).await.unwrap_or(0);
+            let n2 = tokio::time::timeout(
+                std::time::Duration::from_millis(300),
+                socket.read(&mut client_response),
+            )
+            .await
+            .unwrap_or(Ok(0))
+            .unwrap_or(0);
             if n2 > 0 {
                 client_response.truncate(n2);
                 let (_sc2, out_bytes2) =
@@ -519,7 +538,7 @@ mod tests {
                 }
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
             if new_context.dwLower != 0 || new_context.dwUpper != 0 {
                 unsafe {

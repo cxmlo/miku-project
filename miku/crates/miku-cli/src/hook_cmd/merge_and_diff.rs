@@ -130,7 +130,16 @@ pub fn merge_miku_hook_settings(
     raw_existing: &str,
     agent: HookTargetAgent,
 ) -> Result<(String, bool), HookInstallError> {
-    let mut root_map = validate_and_parse_settings_json(raw_existing)?;
+    let root_map = validate_and_parse_settings_json(raw_existing)?;
+    merge_miku_hook_settings_from_map(root_map, raw_existing, agent)
+}
+
+/// Merges ONLY the Miku hook/MCP entry into a pre-validated `root_map` without re-parsing JSON.
+pub fn merge_miku_hook_settings_from_map(
+    mut root_map: Map<String, Value>,
+    raw_existing: &str,
+    agent: HookTargetAgent,
+) -> Result<(String, bool), HookInstallError> {
     let before_map = root_map.clone();
 
     match agent {

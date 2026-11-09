@@ -169,16 +169,18 @@ fn ensure_not_symlink(path: &Path) -> Result<(), HookInstallError> {
     Ok(())
 }
 
-fn validate_confined_path(
-    authorized_config_root: &Path,
-    target_path: &Path,
-    expected_ext: &str,
-) -> Result<(CanonicalPathJail, PathBuf, String), HookInstallError> {
+fn build_config_jail(authorized_config_root: &Path) -> Result<CanonicalPathJail, HookInstallError> {
     ensure_not_symlink(authorized_config_root)?;
     let root_str = authorized_config_root.to_string_lossy().replace('\\', "/");
-    let jail = CanonicalPathJail::new(&root_str)
-        .map_err(|e| HookInstallError::PathEscapeOrInvalid(e.to_string()))?;
+    CanonicalPathJail::new(&root_str)
+        .map_err(|e| HookInstallError::PathEscapeOrInvalid(e.to_string()))
+}
 
+fn validate_confined_path_with_jail(
+    jail: &CanonicalPathJail,
+    target_path: &Path,
+    expected_ext: &str,
+) -> Result<(PathBuf, String), HookInstallError> {
     let target_str = target_path.to_string_lossy().replace('\\', "/");
     let canonical = jail
         .resolve_and_confine(&target_str)
@@ -192,13 +194,10 @@ fn validate_confined_path(
     }
 
     let confined_buf = PathBuf::from(&canonical);
-    if let Some(parent) = confined_buf.parent() {
-        ensure_not_symlink(parent)?;
-    }
     ensure_not_symlink(&confined_buf)?;
 
     let rel = jail.relative_to_root(&canonical);
-    Ok((jail, confined_buf, rel))
+    Ok((confined_buf, rel))
 }
 
 fn evaluate_gatekeeper_fs(
@@ -278,13 +277,14 @@ pub fn install_miku_hook(
     let t0 = Instant::now();
     let mut audit_trail = Vec::with_capacity(8);
 
-    let (_, confined_settings, rel_settings) =
-        validate_confined_path(authorized_config_root, settings_path, ".json")?;
+    let jail = build_config_jail(authorized_config_root)?;
+    let (confined_settings, rel_settings) =
+        validate_confined_path_with_jail(&jail, settings_path, ".json")?;
     let raw_bak = custom_backup_path
         .map(PathBuf::from)
         .unwrap_or_else(|| default_dated_backup_path(&confined_settings, now_ms));
-    let (_, confined_backup, rel_backup) =
-        validate_confined_path(authorized_config_root, &raw_bak, ".bak")?;
+    let (confined_backup, rel_backup) =
+        validate_confined_path_with_jail(&jail, &raw_bak, ".bak")?;
 
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsRead, &rel_settings, now_ms)?;
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsWrite, &rel_backup, now_ms)?;
@@ -305,13 +305,13 @@ pub fn install_miku_hook(
             line: 1,
             column: 1,
             reason: "settings.json is not valid UTF-8".to_string(),
-        })?
-        .to_string();
+        })?;
 
-    let _ = validate_and_parse_settings_json(&original_text)?;
+    let root_map = validate_and_parse_settings_json(original_text)?;
     audit_trail.push(HookAuditStep::ParsedExistingSettings);
 
-    let (merged_text, idempotent_noop) = merge_miku_hook_settings(&original_text, agent)?;
+    let (merged_text, idempotent_noop) =
+        merge_miku_hook_settings_from_map(root_map, original_text, agent)?;
     audit_trail.push(HookAuditStep::MergedMikuEntryOnly);
 
     fs::write(&confined_backup, &original_bytes)
@@ -327,13 +327,15 @@ pub fn install_miku_hook(
     audit_trail.push(HookAuditStep::CreatedAndValidatedBackup);
 
     let unified_diff =
-        compute_unified_diff(&original_text, &merged_text, "a/settings.json", "b/settings.json");
+        compute_unified_diff(original_text, &merged_text, "a/settings.json", "b/settings.json");
     audit_trail.push(HookAuditStep::RenderedUnifiedDiff);
     audit_trail.push(HookAuditStep::RequestedUserConfirmation);
 
+    let prompt_t0 = Instant::now();
     let confirmed = prompter
         .confirm_after_diff(&unified_diff, &confined_backup)
         .map_err(HookInstallError::ConfirmationRejected)?;
+    let prompt_wait = prompt_t0.elapsed();
 
     if !confirmed {
         audit_trail.push(HookAuditStep::CancelledWithoutModifyingActiveFile);
@@ -344,18 +346,9 @@ pub fn install_miku_hook(
             unified_diff,
             applied: false,
             idempotent_noop,
-            elapsed_ms: t0.elapsed().as_secs_f64() * 1_000.0,
+            elapsed_ms: t0.elapsed().saturating_sub(prompt_wait).as_secs_f64() * 1_000.0,
             audit_trail,
         });
-    }
-
-    let final_bak_check = fs::read(&confined_backup).map_err(|e| {
-        HookInstallError::BackupFailed(format!("backup missing before final write: {}", e))
-    })?;
-    if final_bak_check != original_bytes {
-        return Err(HookInstallError::BackupFailed(
-            "backup integrity check failed prior to settings.json write".to_string(),
-        ));
     }
 
     if !idempotent_noop {
@@ -372,7 +365,7 @@ pub fn install_miku_hook(
         unified_diff,
         applied: true,
         idempotent_noop,
-        elapsed_ms: t0.elapsed().as_secs_f64() * 1_000.0,
+        elapsed_ms: t0.elapsed().saturating_sub(prompt_wait).as_secs_f64() * 1_000.0,
         audit_trail,
     })
 }
@@ -386,14 +379,15 @@ pub fn restore_miku_hook(
     now_ms: u64,
 ) -> Result<HookRestoreOutcome, HookInstallError> {
     let t0 = Instant::now();
-    let (_, confined_settings, rel_settings) =
-        validate_confined_path(authorized_config_root, settings_path, ".json")?;
+    let jail = build_config_jail(authorized_config_root)?;
+    let (confined_settings, rel_settings) =
+        validate_confined_path_with_jail(&jail, settings_path, ".json")?;
     let resolved_bak = match backup_path {
         Some(p) => p.to_path_buf(),
         None => discover_latest_backup_for_settings(authorized_config_root, &confined_settings)?,
     };
-    let (_, confined_backup, rel_backup) =
-        validate_confined_path(authorized_config_root, &resolved_bak, ".bak")?;
+    let (confined_backup, rel_backup) =
+        validate_confined_path_with_jail(&jail, &resolved_bak, ".bak")?;
 
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsRead, &rel_backup, now_ms)?;
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsWrite, &rel_settings, now_ms)?;

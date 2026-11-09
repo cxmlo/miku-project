@@ -38,8 +38,15 @@ async fn setup_secret_manager_with_keys(
     Arc::new(Mutex::new(sm))
 }
 
+struct MockServerGuard(tokio::task::JoinHandle<()>);
+impl Drop for MockServerGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Spawns a local mock HTTP server that responds to requests based on custom handler logic.
-async fn spawn_mock_http_server<F>(handler: F) -> (SocketAddr, tokio::task::JoinHandle<()>)
+async fn spawn_mock_http_server<F>(handler: F) -> (SocketAddr, MockServerGuard)
 where
     F: Fn(String, Vec<u8>) -> (u16, &'static str, &'static str) + Send + Sync + 'static,
 {
@@ -57,14 +64,44 @@ where
             };
             let handler = handler.clone();
             tokio::spawn(async move {
-                let mut buf = vec![0u8; 8192];
-                let n = socket.read(&mut buf).await.unwrap_or(0);
-                if n == 0 {
+                let mut raw = Vec::with_capacity(4096);
+                let mut chunk = [0u8; 4096];
+                let mut expected_total: Option<usize> = None;
+                loop {
+                    let n = match socket.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    raw.extend_from_slice(&chunk[..n]);
+                    if expected_total.is_none() {
+                        if let Some(idx) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let hdr = String::from_utf8_lossy(&raw[..idx]);
+                            let cl = hdr
+                                .lines()
+                                .find_map(|l| {
+                                    let (k, v) = l.split_once(':')?;
+                                    if k.trim().eq_ignore_ascii_case("content-length") {
+                                        v.trim().parse::<usize>().ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            expected_total = Some(idx + 4 + cl);
+                        }
+                    }
+                    if let Some(total) = expected_total {
+                        if raw.len() >= total {
+                            break;
+                        }
+                    }
+                }
+                if raw.is_empty() {
                     return;
                 }
-                let req_str = String::from_utf8_lossy(&buf[..n]).to_string();
-                let body = if let Some(idx) = buf[..n].windows(4).position(|w| w == b"\r\n\r\n") {
-                    buf[idx + 4..n].to_vec()
+                let req_str = String::from_utf8_lossy(&raw).to_string();
+                let body = if let Some(idx) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                    raw[idx + 4..].to_vec()
                 } else {
                     Vec::new()
                 };
@@ -79,11 +116,12 @@ where
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.flush().await;
+                let _ = socket.shutdown().await;
             });
         }
     });
 
-    (addr, handle)
+    (addr, MockServerGuard(handle))
 }
 
 /// [LEDGER-3.7-1] Servidor local devuelve HTTP 429 en la key 1 -> harness rota automáticamente a key 2 y completa el turno.

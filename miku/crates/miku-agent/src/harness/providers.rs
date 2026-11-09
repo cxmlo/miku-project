@@ -461,65 +461,104 @@ async fn send_loopback_http_post(
             ))
         })?;
 
-    // Build HTTP/1.1 request wrapped in Zeroizing guard
-    let mut header_buf = Zeroizing::new(Vec::with_capacity(512));
-    header_buf.extend_from_slice(b"POST ");
-    header_buf.extend_from_slice(target.path.as_bytes());
-    header_buf.extend_from_slice(b" HTTP/1.1\r\nHost: ");
-    header_buf.extend_from_slice(target.host.as_bytes());
-    header_buf.extend_from_slice(b":");
-    header_buf.extend_from_slice(target.port.to_string().as_bytes());
-    header_buf.extend_from_slice(b"\r\nContent-Type: application/json\r\nContent-Length: ");
-    header_buf.extend_from_slice(body.len().to_string().as_bytes());
-    header_buf.extend_from_slice(b"\r\nConnection: close\r\n");
+    // Build complete HTTP/1.1 request (headers + body) wrapped in Zeroizing guard for a single atomic write
+    let mut request_buf = Zeroizing::new(Vec::with_capacity(512 + body.len()));
+    request_buf.extend_from_slice(b"POST ");
+    request_buf.extend_from_slice(target.path.as_bytes());
+    request_buf.extend_from_slice(b" HTTP/1.1\r\nHost: ");
+    request_buf.extend_from_slice(target.host.as_bytes());
+    request_buf.extend_from_slice(b":");
+    request_buf.extend_from_slice(target.port.to_string().as_bytes());
+    request_buf.extend_from_slice(b"\r\nContent-Type: application/json\r\nContent-Length: ");
+    request_buf.extend_from_slice(body.len().to_string().as_bytes());
+    request_buf.extend_from_slice(b"\r\nConnection: close\r\n");
 
     if let Some(sec) = secret_bytes {
         if !sec.is_empty() {
             match provider {
                 LlmProvider::DeepSeek | LlmProvider::OpenAi => {
-                    header_buf.extend_from_slice(b"Authorization: Bearer ");
-                    header_buf.extend_from_slice(sec);
-                    header_buf.extend_from_slice(b"\r\n");
+                    request_buf.extend_from_slice(b"Authorization: Bearer ");
+                    request_buf.extend_from_slice(sec);
+                    request_buf.extend_from_slice(b"\r\n");
                 }
                 LlmProvider::Anthropic => {
-                    header_buf.extend_from_slice(b"x-api-key: ");
-                    header_buf.extend_from_slice(sec);
-                    header_buf.extend_from_slice(b"\r\nanthropic-version: 2023-06-01\r\n");
+                    request_buf.extend_from_slice(b"x-api-key: ");
+                    request_buf.extend_from_slice(sec);
+                    request_buf.extend_from_slice(b"\r\nanthropic-version: 2023-06-01\r\n");
                 }
                 LlmProvider::Gemini => {
-                    header_buf.extend_from_slice(b"x-goog-api-key: ");
-                    header_buf.extend_from_slice(sec);
-                    header_buf.extend_from_slice(b"\r\n");
+                    request_buf.extend_from_slice(b"x-goog-api-key: ");
+                    request_buf.extend_from_slice(sec);
+                    request_buf.extend_from_slice(b"\r\n");
                 }
                 LlmProvider::Ollama => {}
             }
         }
     }
-    header_buf.extend_from_slice(b"\r\n");
+    request_buf.extend_from_slice(b"\r\n");
+    request_buf.extend_from_slice(body);
 
-    let write_res = stream.write_all(&header_buf).await;
-    // Zeroizing drops and zeroizes header_buf automatically on any exit path or here
-    drop(header_buf);
+    let write_res = stream.write_all(&request_buf).await;
+    // Zeroizing drops and zeroizes request_buf automatically on any exit path or here
+    drop(request_buf);
 
-    write_res.map_err(|e| HarnessError::NetworkError(format!("failed to send HTTP headers: {}", e)))?;
-
-    stream
-        .write_all(body)
-        .await
-        .map_err(|e| HarnessError::NetworkError(format!("failed to send HTTP body: {}", e)))?;
+    write_res.map_err(|e| HarnessError::NetworkError(format!("failed to send HTTP request: {}", e)))?;
 
     stream
         .flush()
         .await
         .map_err(|e| HarnessError::NetworkError(format!("failed to flush stream: {}", e)))?;
 
-    // Read HTTP response
-    let mut response_buf = Vec::new();
-    let read_fut = stream.read_to_end(&mut response_buf);
-    timeout(Duration::from_millis(timeout_ms), read_fut)
-        .await
-        .map_err(|_| HarnessError::NetworkError("timed out reading HTTP response".to_string()))?
-        .map_err(|e| HarnessError::NetworkError(format!("failed to read HTTP response: {}", e)))?;
+    // Read HTTP response deterministically using Content-Length so we don't block or fail on late TCP RST
+    let mut response_buf = Vec::with_capacity(4096);
+    let read_res = timeout(Duration::from_millis(timeout_ms), async {
+        let mut chunk = [0u8; 4096];
+        let mut expected_total: Option<usize> = None;
+        loop {
+            let n = match stream.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if expected_total.is_some() && !response_buf.is_empty() => {
+                    let _ = e;
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
+            response_buf.extend_from_slice(&chunk[..n]);
+
+            if expected_total.is_none() {
+                if let Some(hdr_end) = response_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let body_start = hdr_end + 4;
+                    let hdr_str = String::from_utf8_lossy(&response_buf[..hdr_end]);
+                    let mut content_len = None;
+                    for line in hdr_str.lines() {
+                        if let Some((k, v)) = line.split_once(':') {
+                            if k.trim().eq_ignore_ascii_case("content-length") {
+                                if let Ok(len) = v.trim().parse::<usize>() {
+                                    content_len = Some(len);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(cl) = content_len {
+                        expected_total = Some(body_start + cl);
+                    }
+                }
+            }
+
+            if let Some(total) = expected_total {
+                if response_buf.len() >= total {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| HarnessError::NetworkError("timed out reading HTTP response".to_string()))?;
+
+    read_res.map_err(|e| HarnessError::NetworkError(format!("failed to read HTTP response: {}", e)))?;
 
     // Parse status line: HTTP/1.1 <status_code>
     let header_end = response_buf
