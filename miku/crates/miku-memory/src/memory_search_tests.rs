@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use miku_gatekeeper::{Capability, DenyReason, GatekeeperEngine, PolicyEffect, ProjectProfile};
-use miku_protocol::{MIKU_JSONRPC_V2, MIKU_PROTOCOL_VERSION_V1};
+use miku_protocol::{JSONRPC_VERSION_2_0, MIKU_PROTOCOL_VERSION_V1};
 use miku_storage::{ConversationTurnRecord, SessionRecord, SingleThreadStoragePool};
 
 use crate::island_search_ipc::{
@@ -450,7 +450,7 @@ fn test_ctrl_k_island_ipc_search_flow_returns_bounded_results_without_full_corpu
     assert!(controller.is_palette_open());
 
     let ipc_req = IslandMemorySearchIpcRequest {
-        jsonrpc: MIKU_JSONRPC_V2.to_string(),
+        jsonrpc: JSONRPC_VERSION_2_0.to_string(),
         v: MIKU_PROTOCOL_VERSION_V1,
         id: "req-ctrl-k-01".to_string(),
         origin: "https://miku.local/index.html".to_string(),

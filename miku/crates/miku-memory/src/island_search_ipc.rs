@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use miku_gatekeeper::GatekeeperEngine;
-use miku_protocol::{MIKU_JSONRPC_V2, MIKU_PROTOCOL_VERSION_V1};
+use miku_protocol::{JSONRPC_VERSION_2_0, MIKU_PROTOCOL_VERSION_V1};
 use miku_storage::sanitize_fts5_query;
 use serde::{Deserialize, Serialize};
 
@@ -20,18 +20,13 @@ pub enum IslandSearchSourceKind {
     SessionHistory,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IslandSearchFilter {
+    #[default]
     All,
     MarkdownOnly,
     SessionsOnly,
-}
-
-impl Default for IslandSearchFilter {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,7 +171,7 @@ impl IslandMemorySearchController {
         vault: &mut MarkdownMemoryVault,
         gatekeeper: &mut GatekeeperEngine,
     ) -> Result<IslandMemorySearchIpcResponse, IslandSearchIpcError> {
-        if req.jsonrpc != MIKU_JSONRPC_V2 || req.v != MIKU_PROTOCOL_VERSION_V1 {
+        if req.jsonrpc != JSONRPC_VERSION_2_0 || req.v != MIKU_PROTOCOL_VERSION_V1 {
             return Err(IslandSearchIpcError::InvalidFrame(
                 "unsupported jsonrpc or protocol version".to_string(),
             ));
@@ -276,7 +271,7 @@ impl IslandMemorySearchController {
             total_indexed_corpus_docs > returned_count && returned_count == bounded_limit;
 
         Ok(IslandMemorySearchIpcResponse {
-            jsonrpc: MIKU_JSONRPC_V2.to_string(),
+            jsonrpc: JSONRPC_VERSION_2_0.to_string(),
             v: MIKU_PROTOCOL_VERSION_V1,
             id: format!("island-search-ack-{}", self.completed_queries),
             reply_to: req.id.clone(),

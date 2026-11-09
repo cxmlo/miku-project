@@ -991,9 +991,7 @@ fn scan_lexical_field(
     term_counts: &mut [usize],
     token_buf: &mut String,
 ) -> usize {
-    for c in term_counts.iter_mut() {
-        *c = 0;
-    }
+    term_counts.fill(0);
     token_buf.clear();
     let mut total_tokens = 0usize;
 
