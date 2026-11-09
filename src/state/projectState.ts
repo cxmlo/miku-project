@@ -1584,7 +1584,7 @@ export const PROJECT_STATE: ProjectStateData = {
       '2. Progreso verificado intacto: 39 / 58 micro-pasos verificados (67.2% total · Fase 0..2: 100% [29/29] · Fase 3: 10/13 pasos verificados = 76.9%; Paso 3.12 permanece PENDIENTE y sin iniciar).',
       '3. Caché condicional y ahorro de recursos: envía `If-None-Match` y `If-Modified-Since`; ante `304 Not Modified` conserva la caché con 0 reprocesamientos (`reparse_delta == 0`) y 0 despertares UI (`ui_wake_delta == 0`).',
       '4. Resiliencia y seguridad: aislamiento de errores/timeouts por fuente RSS/API, respeto de `X-RateLimit-Remaining == 0`, pausa automática en Modo Gaming u offline, renderizado `textContent` y apertura en Zen Browser vía `GatekeeperEngine` (`Capability::Browser`).',
-      '5. Todos los archivos `.rs` nuevos o modificados cumplen < 600 líneas (`lib.rs`: 369, `feed/mod.rs`: 15, `feed/types_and_cache.rs`: 416, `feed/engine.rs`: 436, `feed/tests.rs`: 487) + diseño en `docs/design/F-14.md`.',
+      '5. Todos los archivos `.rs` nuevos o modificados cumplen < 600 líneas (`lib.rs`: 369, `feed/mod.rs`: 15, `feed/types_and_cache.rs`: 416, `feed/engine.rs`: 439, `feed/tests.rs`: 492) + diseño en `docs/design/F-14.md`.',
     ],
   },
 
@@ -5379,14 +5379,14 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-ui/src/feed/engine.rs',
       kind: 'file',
-      description: 'Controlador `IslandTechFeedController`: sincronización condicional con 0 reprocesamientos/0 despertares UI en `304 Not Modified`, aislamiento de fallos por fuente, pausa en Modo Gaming u offline, renderizado `textContent` y apertura en Zen Browser vía `GatekeeperEngine` (436 líneas < 600)',
+      description: 'Controlador `IslandTechFeedController`: sincronización condicional con 0 reprocesamientos/0 despertares UI en `304 Not Modified`, aislamiento de fallos por fuente, pausa en Modo Gaming u offline, renderizado `textContent` (`apply_ipc_envelope`) y apertura en Zen Browser vía `GatekeeperEngine` (439 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/feed/tests.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 3.11 (`LEDGER-3.11-1..6` · 487 líneas < 600) en PENDIENTE-LOCAL',
+      description: 'Suite TDD del Paso 3.11 (`LEDGER-3.11-1..6` · 492 líneas < 600) con `OverviewSceneController::new(&avatar_dir, false)` en PENDIENTE-LOCAL',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },

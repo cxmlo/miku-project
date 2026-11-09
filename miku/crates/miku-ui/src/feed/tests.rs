@@ -36,6 +36,11 @@ fn test_feed_gatekeeper_engine() -> GatekeeperEngine {
     GatekeeperEngine::new(profile).expect("valid gatekeeper engine")
 }
 
+fn test_overview_scene_controller() -> OverviewSceneController {
+    let avatar_dir = resolve_avatar_assets_dir();
+    OverviewSceneController::new(&avatar_dir, false).expect("init overview scene controller")
+}
+
 // ============================================================================
 // LEDGER-3.11-1: 304 Not Modified conserva el contenido en caché y evita
 //                reprocesar y despertar la UI.
@@ -43,7 +48,7 @@ fn test_feed_gatekeeper_engine() -> GatekeeperEngine {
 #[test]
 fn test_http_304_not_modified_preserves_cache_without_reparse_or_ui_wake() {
     let mut gk = test_feed_gatekeeper_engine();
-    let mut overview = OverviewSceneController::new();
+    let mut overview = test_overview_scene_controller();
     let mut bridge = WebView2IpcBridge::new().unwrap();
     let mut transport = MockFeedTransport::new();
     let mut controller = IslandTechFeedController::new();
@@ -114,7 +119,7 @@ fn test_http_304_not_modified_preserves_cache_without_reparse_or_ui_wake() {
 #[test]
 fn test_rss_source_timeout_or_error_isolates_failure_and_renders_healthy_sources() {
     let mut gk = test_feed_gatekeeper_engine();
-    let mut overview = OverviewSceneController::new();
+    let mut overview = test_overview_scene_controller();
     let mut bridge = WebView2IpcBridge::new().unwrap();
     let mut transport = MockFeedTransport::new();
     let mut controller = IslandTechFeedController::new();
@@ -176,7 +181,7 @@ fn test_rss_source_timeout_or_error_isolates_failure_and_renders_healthy_sources
 #[test]
 fn test_conditional_cache_sends_if_none_match_and_if_modified_since_and_updates_validators() {
     let mut gk = test_feed_gatekeeper_engine();
-    let mut overview = OverviewSceneController::new();
+    let mut overview = test_overview_scene_controller();
     let mut bridge = WebView2IpcBridge::new().unwrap();
     let mut transport = MockFeedTransport::new();
     let mut controller = IslandTechFeedController::new();
@@ -255,7 +260,7 @@ fn test_conditional_cache_sends_if_none_match_and_if_modified_since_and_updates_
 #[test]
 fn test_sync_pauses_in_gaming_mode_and_offline_and_resumes_without_loss_or_duplicates() {
     let mut gk = test_feed_gatekeeper_engine();
-    let mut overview = OverviewSceneController::new();
+    let mut overview = test_overview_scene_controller();
     let mut bridge = WebView2IpcBridge::new().unwrap();
     let mut transport = MockFeedTransport::new();
     let mut controller = IslandTechFeedController::new();
@@ -341,7 +346,7 @@ fn test_sync_pauses_in_gaming_mode_and_offline_and_resumes_without_loss_or_dupli
 #[test]
 fn test_github_client_respects_x_ratelimit_remaining_and_conditional_cache() {
     let mut gk = test_feed_gatekeeper_engine();
-    let mut overview = OverviewSceneController::new();
+    let mut overview = test_overview_scene_controller();
     let mut bridge = WebView2IpcBridge::new().unwrap();
     let mut transport = MockFeedTransport::new();
     let mut controller = IslandTechFeedController::new();
@@ -412,7 +417,7 @@ fn test_github_client_respects_x_ratelimit_remaining_and_conditional_cache() {
 #[test]
 fn test_island_renders_feed_items_safely_and_opens_links_in_zen_browser_via_gatekeeper() {
     let mut gk = test_feed_gatekeeper_engine();
-    let mut overview = OverviewSceneController::new();
+    let mut overview = test_overview_scene_controller();
     let mut bridge = WebView2IpcBridge::new().unwrap();
     let mut transport = MockFeedTransport::new();
     let mut launcher = MockZenBrowserLauncher::new();

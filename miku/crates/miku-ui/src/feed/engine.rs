@@ -350,21 +350,24 @@ impl IslandTechFeedController {
             renders.push(cell);
         }
 
-        // Record sanitized DOM update in OverviewSceneController via AgentEvent
+        // Record sanitized DOM update in OverviewSceneController via AgentEvent over WebView2IpcBridge
         let feed_title = if let Some(first) = self.merged_items.first() {
             format!("[{}] {} (+{})", first.badge, first.title, self.merged_items.len())
         } else {
             "Feed técnico sin novedades".to_string()
         };
-        let _ = overview.apply_inbound_message(
-            bridge,
-            "feed-ui-sync",
-            &MikuLinkMessageV1::AgentEvent {
+        let env = WebViewIpcEnvelopeV1::new(
+            "feed-ui-sync".to_string(),
+            None,
+            OVERVIEW_VIRTUAL_INDEX_URL,
+            WebViewIpcPayloadV1::MikuLink(MikuLinkMessageV1::AgentEvent {
                 agent: "island_tech_feed".to_string(),
                 kind: "tech_feed_updated".to_string(),
                 title: feed_title,
-            },
-        )?;
+            }),
+        );
+        let raw_json = env.encode_post_message_json()?;
+        let _ = overview.apply_ipc_envelope(bridge, OVERVIEW_VIRTUAL_INDEX_URL, &raw_json)?;
 
         Ok(renders)
     }
