@@ -319,6 +319,16 @@ pub fn handle_island_custom_agent_ipc(
     serde_json::to_string(&resp).map_err(|e| CustomAgentError::InvalidIpcRequest(e.to_string()))
 }
 
+fn canonical_provider_toml_id(provider: LlmProvider) -> &'static str {
+    match provider {
+        LlmProvider::DeepSeek => "deep_seek",
+        LlmProvider::Anthropic => "anthropic",
+        LlmProvider::OpenAi => "open_ai",
+        LlmProvider::Gemini => "gemini",
+        LlmProvider::Ollama => "ollama",
+    }
+}
+
 fn render_agent_toml(req: &IslandCreateCustomAgentRequest) -> String {
     let tools_list = req
         .allowed_tools
@@ -352,7 +362,7 @@ max_context_tokens = {}
         req.id.trim(),
         req.display_name.trim().replace('"', "\\\""),
         req.description.trim().replace('"', "\\\""),
-        req.provider.as_str(),
+        canonical_provider_toml_id(req.provider),
         req.model.trim().replace('"', "\\\""),
         DEFAULT_SOUL_FILENAME,
         tools_list,

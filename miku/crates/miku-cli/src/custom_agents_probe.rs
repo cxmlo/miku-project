@@ -190,7 +190,7 @@ mod tests {
 id = "agent-compact"
 display_name = "Compact"
 description = "Compact custom agent"
-provider = "deepseek"
+provider = "deep_seek"
 model = "deepseek-chat"
 soul_path = "SOUL.md"
 allowed_tools = ["fs_read"]
@@ -242,7 +242,7 @@ allowed_tools = ["fs_read"]
 id = "agent-broken"
 display_name = "Broken"
 description = "Escapes folder"
-provider = "openai"
+provider = "open_ai"
 model = "gpt-4o"
 soul_path = "../outside.md"
 allowed_tools = ["fs_read"]

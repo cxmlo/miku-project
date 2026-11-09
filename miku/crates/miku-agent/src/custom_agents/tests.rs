@@ -137,14 +137,14 @@ fn test_agent_toml_manifest_validation_rejects_malformed_unknown_fields_duplicat
     ));
 
     // 5. Unknown fields in agent.toml are rejected by #[serde(deny_unknown_fields)]
-    let unknown_field_toml = "schema_version = 1\nunexpected_root_key = \"forbidden\"\n[agent]\nid = \"sec-agent\"\ndisplay_name = \"Sec\"\ndescription = \"Desc\"\nprovider = \"deepseek\"\nmodel = \"deepseek-chat\"\nsoul_path = \"SOUL.md\"\nallowed_tools = [\"fs_read\"]\n";
+    let unknown_field_toml = "schema_version = 1\nunexpected_root_key = \"forbidden\"\n[agent]\nid = \"sec-agent\"\ndisplay_name = \"Sec\"\ndescription = \"Desc\"\nprovider = \"deep_seek\"\nmodel = \"deepseek-chat\"\nsoul_path = \"SOUL.md\"\nallowed_tools = [\"fs_read\"]\n";
     assert!(matches!(
         CustomAgentDescriptor::parse_and_validate(unknown_field_toml, &valid_dir, &base_reg),
         Err(CustomAgentError::ManifestParseError(_))
     ));
 
     // 6. Path traversal in soul_path ("../outside_soul.md") is rejected by CanonicalPathJail
-    let traversal_toml = "schema_version = 1\n[agent]\nid = \"escape-agent\"\ndisplay_name = \"Escape\"\ndescription = \"Tries to read SOUL outside agent folder\"\nprovider = \"deepseek\"\nmodel = \"deepseek-chat\"\nsoul_path = \"../outside_soul.md\"\nallowed_tools = [\"fs_read\"]\n";
+    let traversal_toml = "schema_version = 1\n[agent]\nid = \"escape-agent\"\ndisplay_name = \"Escape\"\ndescription = \"Tries to read SOUL outside agent folder\"\nprovider = \"deep_seek\"\nmodel = \"deepseek-chat\"\nsoul_path = \"../outside_soul.md\"\nallowed_tools = [\"fs_read\"]\n";
     assert!(matches!(
         CustomAgentDescriptor::parse_and_validate(traversal_toml, &valid_dir, &base_reg),
         Err(CustomAgentError::PathJailViolation(_))
@@ -158,7 +158,7 @@ fn test_agent_toml_manifest_validation_rejects_malformed_unknown_fields_duplicat
     ));
 
     let empty_soul_dir = write_custom_agent_fixture(
-        temp.path(), "empty-soul", "Empty Soul", "openai", "gpt-4o",
+        temp.path(), "empty-soul", "Empty Soul", "open_ai", "gpt-4o",
         DEFAULT_SOUL_FILENAME, &["fs_read"], &[], "   \n  ",
     );
     assert!(matches!(
@@ -175,7 +175,7 @@ fn test_agent_toml_manifest_validation_rejects_malformed_unknown_fields_duplicat
         Err(CustomAgentError::UnknownToolInManifest(_))
     ));
 
-    let raw_key_alias_toml = "schema_version = 1\n[agent]\nid = \"raw-key-agent\"\ndisplay_name = \"Raw Key\"\ndescription = \"Puts sk- secret in alias list\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\nsoul_path = \"SOUL.md\"\nallowed_tools = [\"fs_read\"]\ncredential_aliases = [\"sk-proj-fake-key-value-12345\"]\n";
+    let raw_key_alias_toml = "schema_version = 1\n[agent]\nid = \"raw-key-agent\"\ndisplay_name = \"Raw Key\"\ndescription = \"Puts sk- secret in alias list\"\nprovider = \"open_ai\"\nmodel = \"gpt-4o\"\nsoul_path = \"SOUL.md\"\nallowed_tools = [\"fs_read\"]\ncredential_aliases = [\"sk-proj-fake-key-value-12345\"]\n";
     assert!(matches!(
         CustomAgentDescriptor::parse_and_validate(raw_key_alias_toml, &valid_dir, &base_reg),
         Err(CustomAgentError::InvalidCredentialAlias(_))
@@ -190,7 +190,7 @@ fn test_strict_session_isolation_blocks_agent_a_from_reading_modifying_or_assemb
     let (mut orch, _gk) = build_test_orchestrator(&jail_root);
 
     let dir_a = write_custom_agent_fixture(
-        temp.path(), "agent-alpha", "Agent Alpha", "deepseek", "deepseek-chat",
+        temp.path(), "agent-alpha", "Agent Alpha", "deep_seek", "deepseek-chat",
         DEFAULT_SOUL_FILENAME, &["fs_read"], &["alias-alpha"], "# Alpha Soul\nYou are Agent Alpha.",
     );
     let dir_b = write_custom_agent_fixture(
@@ -268,14 +268,14 @@ fn test_strict_credential_alias_isolation_blocks_cross_agent_secret_access_with_
     let dummy_secret_b = b"DUMMY_PORTABLE_CREDENTIAL_BRAVO_222";
 
     orch.secret_manager_mut()
-        .set_secret("alias-only-alpha", "deepseek", Some("deepseek-chat"), dummy_secret_a)
+        .set_secret("alias-only-alpha", "deep_seek", Some("deepseek-chat"), dummy_secret_a)
         .expect("set dummy secret A");
     orch.secret_manager_mut()
         .set_secret("alias-only-bravo", "anthropic", Some("claude-3-7-sonnet"), dummy_secret_b)
         .expect("set dummy secret B");
 
     let dir_a = write_custom_agent_fixture(
-        temp.path(), "agent-alpha", "Agent Alpha", "deepseek", "deepseek-chat",
+        temp.path(), "agent-alpha", "Agent Alpha", "deep_seek", "deepseek-chat",
         DEFAULT_SOUL_FILENAME, &["fs_read"], &["alias-only-alpha"], "# Alpha Soul\nAlpha directives.",
     );
     let dir_b = write_custom_agent_fixture(
@@ -330,7 +330,7 @@ fn test_scoped_tools_and_gatekeeper_enforcement_require_both_manifest_declaratio
 
     // Agent declares ONLY `fs_read` and `fs_write` (does NOT declare `shell_exec`)
     let dir_ro = write_custom_agent_fixture(
-        temp.path(), "scoped-coder", "Scoped Coder", "deepseek", "deepseek-coder",
+        temp.path(), "scoped-coder", "Scoped Coder", "deep_seek", "deepseek-coder",
         DEFAULT_SOUL_FILENAME, &["fs_read", "fs_write"], &[],
         "# Scoped Coder\nOnly reads and writes confined source files.",
     );
@@ -383,7 +383,7 @@ fn test_lazy_agent_loading_keeps_uninvoked_agents_at_zero_context_ram_until_firs
 
     for id in ["lazy-one", "lazy-two", "lazy-three"] {
         let dir = write_custom_agent_fixture(
-            temp.path(), id, &format!("Agent {}", id), "deepseek", "deepseek-chat",
+            temp.path(), id, &format!("Agent {}", id), "deep_seek", "deepseek-chat",
             DEFAULT_SOUL_FILENAME, &["fs_read"], &[],
             &format!("# Soul for {}\nDetailed persona instructions for {}.", id, id),
         );
@@ -441,7 +441,7 @@ fn test_soul_md_isolation_and_soul_token_audit_warns_when_exceeding_recommended_
         "verbose_directive_token ".repeat(1_200)
     );
     let oversized_dir = write_custom_agent_fixture(
-        temp.path(), "oversized-agent", "Oversized Agent", "openai", "gpt-4o",
+        temp.path(), "oversized-agent", "Oversized Agent", "open_ai", "gpt-4o",
         DEFAULT_SOUL_FILENAME, &["fs_read"], &[], &oversized_body,
     );
 

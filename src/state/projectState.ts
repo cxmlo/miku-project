@@ -3954,7 +3954,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-09',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-agent custom_agents::tests:: -- --nocapture',
-      evidenceNote: 'PENDIENTE-LOCAL (CARGO_NOT_INSTALLED_IN_CONTAINER): Valida carga declarativa de `agent.toml` + `SOUL.md` con 0 ejecuciones de herramientas y rechazo fail-closed de TOML malformado, campos desconocidos (`#[serde(deny_unknown_fields)]`), IDs duplicados (incluyendo colisión con `claude-code`), path traversal (`../outside_soul.md`) en `CanonicalPathJail`, `SOUL.md` vacío y claves crudas en `credential_aliases`.',
+      evidenceNote: 'PENDIENTE-LOCAL tras corregir bloqueo ROJO real de Windows 11 (`custom_agents::tests::`: 1 aprobada, 6 fallidas; `miku-cli`: 14 aprobadas, 1 fallida, `CLI_EXIT_CODE=101`; Workspace: 46 aprobadas, 6 fallidas, `WORKSPACE_EXIT_CODE=101`; `CLIPPY_EXIT_CODE=0`): `traversal_toml`, `empty_soul_dir` y `raw_key_alias_toml` usaban `deepseek`/`openai` en lugar de los identificadores canónicos de `LlmProvider` (`deep_seek`/`open_ai`), deteniendo el parseo antes de alcanzar `CanonicalPathJail`. Corregidas las fixtures a `deep_seek`/`open_ai`; pendiente de re-ejecutar en Windows 11.',
     },
     {
       id: 'LEDGER-3.12-2',
@@ -3965,7 +3965,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-09',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-agent custom_agents::tests:: -- --nocapture',
-      evidenceNote: 'PENDIENTE-LOCAL (CARGO_NOT_INSTALLED_IN_CONTAINER): Verifica que `agent-alpha` no puede leer (`read_isolated_session_history`), añadir turnos (`append_isolated_turn`), borrar (`delete_isolated_session`) ni ensamblar un prompt (`assemble_isolated_turn_prompt`) sobre la sesión privada `sess-bravo-secret-99` de `agent-bravo` (`CrossAgentSessionAccessDenied`), incluso conociendo el `session_id`.',
+      evidenceNote: 'PENDIENTE-LOCAL tras corregir bloqueo ROJO real de Windows 11 (`custom_agents::tests::`: 1 aprobada, 6 fallidas; `WORKSPACE_EXIT_CODE=101`): la fixture `agent-alpha` usaba `provider = "deepseek"` en vez del identificador Serde canónico `"deep_seek"` de `LlmProvider`. Corregido a `"deep_seek"`; pendiente de re-ejecutar en Windows 11.',
     },
     {
       id: 'LEDGER-3.12-3',
@@ -3976,7 +3976,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-09',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-agent custom_agents::tests:: -- --nocapture',
-      evidenceNote: 'PENDIENTE-LOCAL (CARGO_NOT_INSTALLED_IN_CONTAINER): Verifica con `EncryptedMemoryBackend` y secretos ficticios que `agent-alpha` resuelve su propio alias pero es bloqueado con `UnauthorizedCredentialAlias` antes de consultar `SecretManager` al pedir el alias exclusivo de `agent-bravo`, sin incrementar `authorized_read_attempts` ni filtrar secretos en errores.',
+      evidenceNote: 'PENDIENTE-LOCAL tras corregir bloqueo ROJO real de Windows 11 (`custom_agents::tests::`: 1 aprobada, 6 fallidas; `WORKSPACE_EXIT_CODE=101`): la fixture `agent-alpha` usaba `provider = "deepseek"` en vez de `"deep_seek"`. Corregido a `"deep_seek"`; pendiente de re-ejecutar en Windows 11.',
     },
     {
       id: 'LEDGER-3.12-4',
@@ -3987,7 +3987,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-09',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-agent custom_agents::tests:: -- --nocapture',
-      evidenceNote: 'PENDIENTE-LOCAL (CARGO_NOT_INSTALLED_IN_CONTAINER): Verifica que una herramienta no declarada en `allowed_tools` (`shell_exec`) falla con `UndeclaredToolForAgent` antes del Gatekeeper, y que las herramientas declaradas (`fs_read`, `fs_write`) siguen sujetas a las reglas `Deny`, `Ask` y `Allow` de `GatekeeperEngine`.',
+      evidenceNote: 'PENDIENTE-LOCAL tras corregir bloqueo ROJO real de Windows 11 (`custom_agents::tests::`: 1 aprobada, 6 fallidas; `WORKSPACE_EXIT_CODE=101`): la fixture `scoped-coder` usaba `provider = "deepseek"` en vez de `"deep_seek"`. Corregido a `"deep_seek"`; pendiente de re-ejecutar en Windows 11.',
     },
     {
       id: 'LEDGER-3.12-5',
@@ -3998,7 +3998,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-09',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-agent custom_agents::tests:: -- --nocapture',
-      evidenceNote: 'PENDIENTE-LOCAL (CARGO_NOT_INSTALLED_IN_CONTAINER): Verifica que registrar, listar y seleccionar agentes mantiene `loaded_agent_count() == 0` y `loaded_soul_bytes() == 0`; invocar `lazy-two` carga solo su contexto en RAM dejando `lazy-one` y `lazy-three` en 0 bytes, y `unload_agent_context` libera la memoria.',
+      evidenceNote: 'PENDIENTE-LOCAL tras corregir bloqueo ROJO real de Windows 11 (`custom_agents::tests::`: 1 aprobada, 6 fallidas; `WORKSPACE_EXIT_CODE=101`): las fixtures `lazy-one..three` usaban `provider = "deepseek"` en vez de `"deep_seek"`. Corregido a `"deep_seek"`; pendiente de re-ejecutar en Windows 11.',
     },
     {
       id: 'LEDGER-3.12-6',
@@ -4009,7 +4009,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-09',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-agent custom_agents::tests:: -- --nocapture',
-      evidenceNote: 'PENDIENTE-LOCAL (CARGO_NOT_INSTALLED_IN_CONTAINER): Verifica que cada `SOUL.md` se asocia exclusivamente al `StaticSystemPrefix` de su propio agente sin mezclarse con otros, y que `audit_custom_agent_soul` (y la sonda #6 de `miku doctor`) advierte cuando `SOUL.md > RECOMMENDED_MAX_SOUL_TOKENS` (1,024 tokens).',
+      evidenceNote: 'PENDIENTE-LOCAL tras corregir bloqueo ROJO real de Windows 11 (`custom_agents::tests::`: 1 aprobada, 6 fallidas; `miku-cli`: 14 aprobadas, 1 fallida, `CLI_EXIT_CODE=101`): `oversized-agent` (usaba `"openai"` en vez de `"open_ai"`) y `agent-compact` en `miku-cli` (usaba `"deepseek"` en vez de `"deep_seek"`) fueron actualizados a los identificadores canónicos de `LlmProvider`; pendiente de re-ejecutar en Windows 11.',
     },
     {
       id: 'LEDGER-3.12-7',
@@ -4020,7 +4020,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-09',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-agent custom_agents::tests:: -- --nocapture',
-      evidenceNote: 'PENDIENTE-LOCAL (CARGO_NOT_INSTALLED_IN_CONTAINER): Verifica el flujo IPC JSON-RPC 2.0 de la Island (`Create`, `List`, `Select`) con validación de origen y autorización `GatekeeperEngine` (`Capability::FsWrite`), comprobando que jamás expone secretos ni texto crudo de `SOUL.md` y que todos los archivos `.rs` de `miku-agent/src` tienen < 600 líneas.',
+      evidenceNote: 'PENDIENTE-LOCAL (1 aprobada en la primera corrida en Windows 11 con `LlmProvider::Anthropic`; además se actualizó `render_agent_toml` en `island_ipc.rs` con `canonical_provider_toml_id` para emitir siempre `deep_seek`/`open_ai`/`anthropic`/`gemini`/`ollama`): pendiente de re-ejecutar la suite completa en Windows 11.',
     },
   ],
 
@@ -4554,17 +4554,17 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
-      version: 'Compuerta D · Paso 3.12 en PENDIENTE-LOCAL: Agentes propios con `agent.toml` y `SOUL.md` aislados, Carga Perezosa y Sonda en `miku doctor` (F-06 · 40/58 = 69.0% verificados)',
+      version: 'Compuerta D · Paso 3.12 en PENDIENTE-LOCAL: Corrección de Identificadores Serde Canónicos de `LlmProvider` (`deep_seek`, `open_ai`) en Fixtures F-06 tras Evidencia ROJO de Windows 11',
       date: '2026-11-09',
       gate: 'Compuerta D (Fase 3 · Pasos 3.1..3.11 VERIFICADOS [40/58 = 69.0%] · Paso 3.12 PENDIENTE-LOCAL)',
       summary:
-        'Implementado el Micro-paso 3.12 (F-06: Agentes propios con `agent.toml` y `SOUL.md` aislados) en `miku/crates/miku-agent/src/custom_agents/` y `miku/crates/miku-cli/src/custom_agents_probe.rs`: (1) `CustomAgentDescriptor` valida `agent.toml` (`#[serde(deny_unknown_fields)]`), confina `soul_path` con `CanonicalPathJail`, prohíbe symlinks y rechaza IDs duplicados o claves crudas en `credential_aliases` sin ejecutar herramientas; (2) `CustomAgentOrchestrator` impone aislamiento estricto de historial de sesión (`CrossAgentSessionAccessDenied`) y de alias de credenciales (`UnauthorizedCredentialAlias` antes de consultar `SecretManager`); (3) las herramientas permitidas son la intersección de `allowed_tools` y `GatekeeperEngine` (`deny-by-default`); (4) la carga en RAM es perezosa (`0 bytes` de `SOUL.md` al registrar, listar o seleccionar en la Island hasta la primera invocación); (5) `miku doctor` añade la sonda #6 (`custom_agents_soul_budget`) que emite `ProbeStatus::Warn` si `SOUL.md > 1,024` tokens (`miku_memory::estimate_tokens`); (6) todos los archivos `.rs` nuevos y modificados en `miku-agent` y `miku-cli` están por debajo de 600 líneas y se entrega `docs/design/F-06.md`. Queda en PENDIENTE-LOCAL a la espera de la salida real en Windows 11.',
+        'Registrada la evidencia ROJO real de Windows 11 para el Micro-paso 3.12 (`miku-agent custom_agents::tests::`: 1 aprobada, 6 fallidas; `miku-cli`: 14 aprobadas, 1 fallida, `CLI_EXIT_CODE=101`; Workspace: 46 aprobadas, 6 fallidas, `WORKSPACE_EXIT_CODE=101`; Clippy: `CLIPPY_EXIT_CODE=0`; `npm run lint` limpio y Cockpit 5/5) y corregida la causa raíz sin alterar la serialización pública de `LlmProvider`: las fixtures de `agent.toml` en `miku/crates/miku-agent/src/custom_agents/tests.rs` y `miku/crates/miku-cli/src/custom_agents_probe.rs` usaban `"deepseek"` y `"openai"` en lugar de las variantes `#[serde(rename_all = "snake_case")]` de `LlmProvider` (`"deep_seek"`, `"anthropic"`, `"open_ai"`, `"gemini"`, `"ollama"`), lo que detenía el parseo TOML antes de ejecutar las validaciones de aislamiento y `CanonicalPathJail`. Asimismo, se actualizó `render_agent_toml` en `island_ipc.rs` (`373` líneas < 600) con `canonical_provider_toml_id` y se documentaron los 5 valores canónicos en `docs/design/F-06.md`. El paso 3.12 y `LEDGER-3.12-1..7` se mantienen en `PENDIENTE-LOCAL` (progreso verificado 40/58 = 69.0%).',
       highlights: [
-        'Módulo `miku-agent::custom_agents` (`mod.rs`: 22, `manifest.rs`: 534, `runtime.rs`: 542, `island_ipc.rs`: 363, `tests.rs`: 558 líneas < 600).',
-        'Modularización de `miku-cli` (`lib.rs`: 90, `custom_agents_probe.rs`: 258, `doctor_probes.rs`: 412, `doctor_config_and_budgets.rs`: 304, `doctor_runner.rs`: 383, `doctor_tests.rs`: 228 líneas < 600).',
-        '7 pruebas TDD (`LEDGER-3.12-1..7`) en `miku-agent` + prueba unitaria de sonda en `miku-cli` usando `EncryptedMemoryBackend` y secretos ficticios.',
-        'Documentación de diseño entregada en `docs/design/F-06.md` (115 líneas).',
-        'Progreso verificado mantenido honestamente en 40/58 (69.0%) y Fase 3 en 11/13 (84.6%) hasta verificar en Windows 11.',
+        'Evidencia ROJO real registrada: `custom_agents::tests::` 1/7, `miku-cli` 14/15 (`CLI_EXIT_CODE=101`), Workspace 46 aprobadas / 6 fallidas (`WORKSPACE_EXIT_CODE=101`), Clippy `CLIPPY_EXIT_CODE=0`.',
+        'Fixtures de `custom_agents/tests.rs` (`558` líneas < 600) y `custom_agents_probe.rs` (`258` líneas < 600) actualizadas a `"deep_seek"` y `"open_ai"` sin tocar la definición de `LlmProvider`.',
+        'Comprobada la prueba de path traversal (`../outside_soul.md`): con `provider = "deep_seek"` válido, el parseo TOML alcanza `CanonicalPathJail::resolve_and_confine` y devuelve `Err(CustomAgentError::PathJailViolation(_))`.',
+        '`render_agent_toml` en `island_ipc.rs` (`373` líneas < 600) actualizado para escribir siempre el identificador Serde canónico (`deep_seek`, `anthropic`, `open_ai`, `gemini`, `ollama`).',
+        'Documentación `docs/design/F-06.md` actualizada con los 5 identificadores canónicos de `provider`; `miku/Cargo.lock` conservado intacto.',
       ],
     },
     {
