@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use miku_gatekeeper::{Capability, GatekeeperEngine, PolicyEffect, ProjectProfile};
-use miku_memory::{ContentChunk, StaticSystemPrefix};
+use miku_memory::{ChunkKind, ContentChunk, SemanticChunker};
 use miku_storage::{ConversationTurnRecord, Fts5SearchHit};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -15,9 +16,9 @@ use crate::secrets::backend::EncryptedMemoryBackend;
 use crate::secrets::manager::SecretManager;
 use crate::token_saver::{
     assemble_turn_prompt_with_stable_prefix, build_static_system_prefix_from_registry,
-    DailySpendTracker, ForwardReason, InjectableDayClock, LocalIntentRouter, LocalRouteCategory,
-    LocalSystemSnapshot, ModelPricingRate, PreFlightBudgetDecision, ProjectDailyBudgetConfig,
-    RouteDecision, TokenUsageRecord,
+    is_assembled_prefix_byte_stable, DailySpendTracker, ForwardReason, InjectableDayClock,
+    LocalIntentRouter, LocalRouteCategory, LocalSystemSnapshot, ModelPricingRate,
+    PreFlightBudgetDecision, ProjectDailyBudgetConfig, RouteDecision, TokenUsageRecord,
 };
 use crate::ToolRegistry;
 
@@ -159,64 +160,93 @@ async fn test_stable_system_and_tools_prefix_remains_byte_for_byte_identical_acr
     let soul = "Eres Miku Desktop Orchestrator. Prioriza precisión, seguridad Gatekeeper y mínimo consumo.";
     let prefix = build_static_system_prefix_from_registry("agent-miku-core", soul, &registry);
 
+    let chunks_1 = SemanticChunker::chunk_document(
+        "docs/design/F-08.md",
+        "# Key Rotation\nRotates keys on HTTP 429 and 5xx with bounded backoff.",
+        ChunkKind::Markdown,
+        16,
+    );
+    let mut lookup_1: BTreeMap<String, ContentChunk> = BTreeMap::new();
+    for ch in chunks_1 {
+        lookup_1.insert(ch.chunk_id.clone(), ch);
+    }
+    let first_doc_id = lookup_1.keys().next().cloned().unwrap_or_else(|| "chk_1".to_string());
+
     let rag_turn_1 = vec![Fts5SearchHit {
-        chunk_id: 1,
-        doc_path: "docs/design/F-08.md".to_string(),
-        heading: "Key Rotation".to_string(),
+        doc_id: first_doc_id,
+        title: "Key Rotation".to_string(),
+        tags: "f08 harness".to_string(),
+        bm25_score: 4.2,
         snippet: "Rotates keys on HTTP 429 and 5xx.".to_string(),
-        bm25_score: -1.5,
+        updated_at_ms: 1_700_000_000_000,
     }];
     let history_turn_1 = vec![ConversationTurnRecord {
-        id: 1,
+        turn_id: "t_1".to_string(),
         session_id: "sess-kv".to_string(),
-        turn_index: 1,
+        seq: 1,
         role: "user".to_string(),
         content: "Revisa la rotación de claves".to_string(),
         token_estimate: 8,
-        created_at_unix_ms: 1_700_000_001_000,
+        ts_ms: 1_700_000_001_000,
     }];
     let assembled_1 = assemble_turn_prompt_with_stable_prefix(
         &prefix,
         &rag_turn_1,
-        &[ContentChunk { id: "c-1".to_string(), text: "Contexto turno 1".to_string(), relevance_score: 90 }],
+        &lookup_1,
         &history_turn_1,
         "Explica cómo funciona el backoff exponencial en turn_loop.rs",
         4096,
+    )
+    .expect("assemble turn 1 prompt");
+
+    let chunks_2 = SemanticChunker::chunk_document(
+        "docs/design/F-09.md",
+        "# Daily Spend Cap\nBlocks paid provider calls at 100% of project budget before reading secrets.",
+        ChunkKind::Markdown,
+        16,
     );
+    let mut lookup_2: BTreeMap<String, ContentChunk> = BTreeMap::new();
+    for ch in chunks_2 {
+        lookup_2.insert(ch.chunk_id.clone(), ch);
+    }
+    let second_doc_id = lookup_2.keys().next().cloned().unwrap_or_else(|| "chk_2".to_string());
 
     let rag_turn_2 = vec![Fts5SearchHit {
-        chunk_id: 42,
-        doc_path: "docs/design/F-09.md".to_string(),
-        heading: "Daily Spend Cap".to_string(),
+        doc_id: second_doc_id,
+        title: "Daily Spend Cap".to_string(),
+        tags: "f09 budget".to_string(),
+        bm25_score: 5.1,
         snippet: "Blocks paid provider calls at 100% of project budget.".to_string(),
-        bm25_score: -2.8,
+        updated_at_ms: 1_700_000_005_000,
     }];
     let history_turn_2 = vec![
         history_turn_1[0].clone(),
         ConversationTurnRecord {
-            id: 2,
+            turn_id: "t_2".to_string(),
             session_id: "sess-kv".to_string(),
-            turn_index: 2,
+            seq: 2,
             role: "assistant".to_string(),
             content: "El backoff exponencial duplica initial_backoff_ms.".to_string(),
             token_estimate: 16,
-            created_at_unix_ms: 1_700_000_002_000,
+            ts_ms: 1_700_000_002_000,
         },
     ];
     let assembled_2 = assemble_turn_prompt_with_stable_prefix(
         &prefix,
         &rag_turn_2,
-        &[ContentChunk { id: "c-99".to_string(), text: "Otro fragmento dinámico turno 2".to_string(), relevance_score: 75 }],
+        &lookup_2,
         &history_turn_2,
         "Ahora analiza el cálculo de micro-USD en budget.rs",
         4096,
-    );
+    )
+    .expect("assemble turn 2 prompt");
 
-    assert!(StaticSystemPrefix::verify_prefix_stability(&assembled_1));
-    assert!(StaticSystemPrefix::verify_prefix_stability(&assembled_2));
-    assert_eq!(assembled_1.static_prefix_hash, assembled_2.static_prefix_hash);
+    assert!(is_assembled_prefix_byte_stable(&prefix, &assembled_1));
+    assert!(is_assembled_prefix_byte_stable(&prefix, &assembled_2));
+    assert_eq!(assembled_1.prefix_sha256, assembled_2.prefix_sha256);
+    assert_eq!(assembled_1.static_prefix.as_bytes(), assembled_2.static_prefix.as_bytes());
 
-    let prefix_bytes_len = prefix.rendered_block().len();
+    let prefix_bytes_len = prefix.rendered_prefix.len();
     assert_eq!(
         &assembled_1.full_prompt.as_bytes()[..prefix_bytes_len],
         &assembled_2.full_prompt.as_bytes()[..prefix_bytes_len],
@@ -260,7 +290,7 @@ async fn test_stable_system_and_tools_prefix_remains_byte_for_byte_identical_acr
     let sys_1 = json_1["messages"][0]["content"].as_str().unwrap();
     let sys_2 = json_2["messages"][0]["content"].as_str().unwrap();
     assert_eq!(sys_1.as_bytes(), sys_2.as_bytes());
-    assert_eq!(sys_1.as_bytes(), prefix.rendered_block().as_bytes());
+    assert_eq!(sys_1.as_bytes(), prefix.rendered_prefix.as_bytes());
 
     server_handle.abort();
 }

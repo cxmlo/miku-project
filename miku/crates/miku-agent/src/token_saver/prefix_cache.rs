@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
+
 use miku_memory::{
-    estimate_tokens, AssembledPrompt, ContentChunk, StaticSystemPrefix, SystemPromptAssembler,
+    estimate_tokens, AssembledPrompt, ContentChunk, MemoryError, StaticSystemPrefix,
+    SystemPromptAssembler,
 };
 use miku_storage::{ConversationTurnRecord, Fts5SearchHit};
 use serde_json::Value;
@@ -11,7 +14,7 @@ use crate::ToolRegistry;
 /// Builds a deterministic `StaticSystemPrefix` directly from `miku-memory` (Step 1.6)
 /// and the canonical `ToolRegistry` (sorted alphabetically by tool name via `BTreeMap`).
 /// Because both soul directives and the sorted tool descriptors are static across turns,
-/// the resulting prefix block and its FNV-1a 64-bit hash are guaranteed byte-for-byte identical.
+/// `rendered_prefix` and `prefix_sha256` are guaranteed byte-for-byte identical.
 pub fn build_static_system_prefix_from_registry(
     agent_id: &str,
     soul_directives: &str,
@@ -28,32 +31,48 @@ pub fn build_static_system_prefix_from_registry(
         });
         tool_entries.push(entry);
     }
-    let canonical_tools_schema = serde_json::to_string(&tool_entries).unwrap_or_else(|_| "[]".to_string());
+    let canonical_tools_schema =
+        serde_json::to_string(&tool_entries).unwrap_or_else(|_| "[]".to_string());
     StaticSystemPrefix::new(agent_id, soul_directives, &canonical_tools_schema)
 }
 
 /// Reuses `SystemPromptAssembler::assemble_within_budget` from `miku-memory` (Step 1.6)
-/// without duplicating prompt assembly or token estimation logic.
+/// with its exact signature and typed `Result<AssembledPrompt, MemoryError>` return.
 pub fn assemble_turn_prompt_with_stable_prefix(
     static_prefix: &StaticSystemPrefix,
-    rag_hits: &[Fts5SearchHit],
-    extra_chunks: &[ContentChunk],
-    recent_turns: &[ConversationTurnRecord],
+    rag_candidates: &[Fts5SearchHit],
+    chunk_lookup: &BTreeMap<String, ContentChunk>,
+    history_turns: &[ConversationTurnRecord],
     active_user_query: &str,
-    max_total_tokens: usize,
-) -> AssembledPrompt {
+    max_budget_tokens: u32,
+) -> Result<AssembledPrompt, MemoryError> {
     SystemPromptAssembler::assemble_within_budget(
         static_prefix,
-        rag_hits,
-        extra_chunks,
-        recent_turns,
+        rag_candidates,
+        chunk_lookup,
+        history_turns,
         active_user_query,
-        max_total_tokens,
+        max_budget_tokens,
     )
 }
 
+/// Verifies that an `AssembledPrompt` preserves the exact byte-for-byte `rendered_prefix`,
+/// `prefix_sha256`, and `prefix_tokens` of the `StaticSystemPrefix`.
+pub fn is_assembled_prefix_byte_stable(
+    static_prefix: &StaticSystemPrefix,
+    assembled: &AssembledPrompt,
+) -> bool {
+    assembled.static_prefix.as_bytes() == static_prefix.rendered_prefix.as_bytes()
+        && assembled.prefix_sha256 == static_prefix.prefix_sha256
+        && assembled.prefix_tokens == static_prefix.prefix_tokens
+        && assembled
+            .full_prompt
+            .as_bytes()
+            .starts_with(static_prefix.rendered_prefix.as_bytes())
+}
+
 /// Formats a provider JSON payload while pinning the immutable `StaticSystemPrefix`
-/// as the very first message in the request.
+/// (`rendered_prefix`) as the very first message in the request.
 /// Across turns where dynamic context or conversation history changes, the static system
 /// prefix remains bit-for-bit identical in the payload to maximize KV cache hits.
 pub fn format_provider_request_with_stable_prefix(
@@ -64,7 +83,7 @@ pub fn format_provider_request_with_stable_prefix(
 ) -> Vec<u8> {
     let mut full_messages: Vec<(String, String)> = Vec::with_capacity(messages.len() + 1);
     if let Some(prefix) = static_prefix {
-        full_messages.push(("system".to_string(), prefix.rendered_block().to_string()));
+        full_messages.push(("system".to_string(), prefix.rendered_prefix.clone()));
     }
     for (role, content) in messages {
         full_messages.push((role.clone(), content.clone()));
@@ -90,7 +109,7 @@ pub fn format_provider_request_with_stable_prefix(
         }
         LlmProvider::Anthropic => {
             let sys_text = static_prefix
-                .map(|p| p.rendered_block().to_string())
+                .map(|p| p.rendered_prefix.clone())
                 .unwrap_or_default();
             let msgs: Vec<Value> = messages
                 .iter()
@@ -190,9 +209,9 @@ pub fn extract_or_estimate_token_usage(
         }
     }
 
-    let prefix_tokens = static_prefix.map(|p| p.token_count() as u32).unwrap_or(0);
-    let dynamic_tokens = estimate_tokens(dynamic_prompt_text) as u32;
-    let output_tokens = estimate_tokens(reply_text) as u32;
+    let prefix_tokens = static_prefix.map(|p| p.prefix_tokens).unwrap_or(0);
+    let dynamic_tokens = estimate_tokens(dynamic_prompt_text);
+    let output_tokens = estimate_tokens(reply_text);
 
     if prefix_cached_in_session {
         TokenUsageRecord {

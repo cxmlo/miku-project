@@ -4238,17 +4238,17 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
-      version: 'Compuerta D · Paso 3.8 ENTREGADO (PENDIENTE-LOCAL): Ahorro de Tokens — Ruteo Local 0-Token, Prefijo Estable KV-Cache y Topes Diarios por Proyecto (F-09) + 6 Tests TDD (LEDGER-3.8-1..6)',
+      version: 'Compuerta D · Paso 3.8 CORRECCIÓN DE COMPILACIÓN (PENDIENTE-LOCAL): Alineación con APIs reales de miku-memory, miku-storage y miku-gatekeeper (F-09)',
       date: '2026-11-08',
       gate: 'Compuerta D (Fase 3 · Paso 3.8 PENDIENTE-LOCAL)',
       summary:
-        'Implementado el Micro-paso 3.8 (F-09) en miku-agent reutilizando StaticSystemPrefix, SystemPromptAssembler y estimate_tokens de miku-memory (Paso 1.6) sin duplicar el sistema de memoria ni añadir dependencias externas (0 crates nuevos). Incluye: (1) LocalIntentRouter (local_router.rs, 429 líneas) que resuelve saludos, comandos internos (/help, /status, /budget, /agents, /models, /version) y consultas locales de estado (hora, batería, agentes activos, gasto diario) con 0 llamadas de red, 0 lecturas de SecretManager y 0 tokens, derivando entradas ambiguas o técnicas al LLM sin falsos positivos y permitiendo forzar explícitamente el LLM dentro del presupuesto (force_llm=true o prefijo "/llm "); (2) Prefijo estable KV-cache (prefix_cache.rs, 210 líneas) que fija el bloque de sistema y herramientas ordenadas alfabéticamente desde ToolRegistry idéntico byte a byte entre turnos aunque cambien RAG FTS5, chunks e historial; (3) Control de gasto diario por proyecto (budget.rs, 527 líneas) con tarifas configurables ModelPricingRate, alerta BudgetWarningAlert al 80 %, bloqueo duro HarnessError::DailyBudgetExceeded al 100 % antes de leer secretos o abrir sockets, oferta de alternativas gratuitas/locales (FallbackAlternative: Ollama local y modo 0-token) y reinicio diario determinista mediante DailyClock / InjectableDayClock. Creado docs/design/F-09.md y registrados LEDGER-3.8-1..6 en estado PENDIENTE-LOCAL.',
+        'Corregidos los errores de compilación del Micro-paso 3.8 (F-09) en Windows 11 frente a las APIs reales del repositorio: (1) añadidos getters de solo lectura profile() y project_name() en GatekeeperEngine (miku-gatekeeper) y actualizado AgentHarness::new en turn_loop.rs (567 líneas < 600); (2) adaptado assemble_turn_prompt_with_stable_prefix en prefix_cache.rs (229 líneas < 600) a la firma real de SystemPromptAssembler::assemble_within_budget (&StaticSystemPrefix, &[Fts5SearchHit], &BTreeMap<String, ContentChunk>, &[ConversationTurnRecord], &str, u32) -> Result<AssembledPrompt, MemoryError> sin unwrap/panic; (3) usados los campos reales rendered_prefix, prefix_sha256 y prefix_tokens de StaticSystemPrefix y static_prefix, prefix_sha256, prefix_tokens y full_prompt de AssembledPrompt; (4) actualizados los fixtures en token_saver/tests.rs (525 líneas < 600) con las estructuras reales Fts5SearchHit, ConversationTurnRecord y ContentChunk (vía SemanticChunker::chunk_document).',
       highlights: [
-        'Paso 3.8 en estado PENDIENTE-LOCAL (progreso global se mantiene en 36/58 = 62.1% hasta recibir la salida real de cargo test y cargo clippy en Windows 11).',
-        'Ruteo local 0-token (LEDGER-3.8-1, LEDGER-3.8-5): 12 intenciones locales resueltas con 0 red y 0 secretos; 11 entradas ambiguas/técnicas derivadas al LLM con 0 falsos positivos.',
-        'Prefijo estable KV-cache (LEDGER-3.8-2): reutiliza miku-memory (Paso 1.6) verificando igualdad bit a bit entre turnos con distinto contexto dinámico.',
-        'Presupuesto diario por proyecto (LEDGER-3.8-3, LEDGER-3.8-4, LEDGER-3.8-6): aviso al 80 %, bloqueo al 100 % antes de SecretManager::get_secret_authorized, conmutación a alternativa gratuita/local (Ollama) y reinicio diario determinista con InjectableDayClock.',
-        'Todos los archivos .rs nuevos y modificados se mantienen estrictamente por debajo de 600 líneas (máximo 565 líneas en turn_loop.rs).',
+        'Validaciones previas confirmadas: npm run lint pasa y cargo test -p miku-memory -p miku-gatekeeper pasa (10/10 tests verdes).',
+        'Paso 3.8 y LEDGER-3.8-1..6 se mantienen en PENDIENTE / PENDIENTE-LOCAL (progreso global verificado 36/58 = 62.1%) hasta recibir la salida en verde de cargo test y cargo clippy en Windows 11.',
+        'GatekeeperEngine::project_name() y profile() añadidos como acceso mínimo de solo lectura.',
+        'assemble_turn_prompt_with_stable_prefix propaga Result<AssembledPrompt, MemoryError> y reutiliza rendered_prefix, prefix_sha256 y prefix_tokens.',
+        'Todos los archivos .rs de miku-agent se mantienen por debajo de 600 líneas (máximo 567 líneas en turn_loop.rs).',
       ],
     },
     {
@@ -5122,21 +5122,21 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-agent/src/token_saver/prefix_cache.rs',
       kind: 'file',
-      description: 'Puente con miku-memory Paso 1.6 (210 líneas < 600): reutiliza StaticSystemPrefix, SystemPromptAssembler y estimate_tokens garantizando prefijo de sistema y herramientas idéntico byte a byte entre turnos',
+      description: 'Puente con miku-memory Paso 1.6 (229 líneas < 600): reutiliza StaticSystemPrefix (rendered_prefix, prefix_sha256, prefix_tokens), SystemPromptAssembler::assemble_within_budget con BTreeMap<String, ContentChunk> y estimate_tokens garantizando prefijo idéntico byte a byte',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-agent/src/token_saver/tests.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 3.8 (495 líneas < 600): 6 tests LEDGER-3.8-1..6 en estado PENDIENTE-LOCAL',
+      description: 'Suite TDD del Paso 3.8 (525 líneas < 600): 6 tests LEDGER-3.8-1..6 alineados con Fts5SearchHit, ConversationTurnRecord y ContentChunk reales en estado PENDIENTE-LOCAL',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-agent/src/harness/turn_loop.rs',
       kind: 'file',
-      description: 'AgentHarness actualizado con F-09 (565 líneas < 600): ruteo local 0-token, evaluación pre-flight del presupuesto diario antes de SecretManager/red, prefijo KV estable y switch_to_fallback_alternative',
+      description: 'AgentHarness actualizado con F-09 (567 líneas < 600): usa gatekeeper.project_name(), ruteo local 0-token, evaluación pre-flight del presupuesto diario antes de SecretManager/red, prefijo KV estable y switch_to_fallback_alternative',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
@@ -5395,8 +5395,8 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-gatekeeper/src/lib.rs',
       kind: 'file',
-      description: 'Motor GatekeeperEngine, CanonicalPathJail, tickets anti-TOCTOU, Kill Switch y TamperEvidentAuditLog SHA-256 VERIFICADOS (5/5 tests verdes, 0 clippy warnings)',
-      deliveredInCurrentTurn: false,
+      description: 'Motor GatekeeperEngine (+ getters de solo lectura profile() y project_name() para Paso 3.8), CanonicalPathJail, tickets anti-TOCTOU, Kill Switch y TamperEvidentAuditLog SHA-256 VERIFICADOS (5/5 tests verdes, 0 clippy warnings)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {

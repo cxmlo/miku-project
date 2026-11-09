@@ -62,10 +62,12 @@ impl AgentHarness {
         session_id: &str,
         session_token: &str,
     ) -> Self {
-        let project_id = gatekeeper.profile().name.clone();
-        let mut local_snapshot = LocalSystemSnapshot::default();
-        local_snapshot.project_id = project_id.clone();
-        local_snapshot.active_model_display = config.model.clone();
+        let project_id = gatekeeper.project_name().to_string();
+        let local_snapshot = LocalSystemSnapshot {
+            project_id: project_id.clone(),
+            active_model_display: config.model.clone(),
+            ..LocalSystemSnapshot::default()
+        };
         let session_manager =
             AgentSessionManager::new(tool_registry, gatekeeper, session_token.to_string());
         Self {

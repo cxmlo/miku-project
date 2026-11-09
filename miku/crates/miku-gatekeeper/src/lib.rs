@@ -670,6 +670,14 @@ impl GatekeeperEngine {
         })
     }
 
+    pub fn profile(&self) -> &ProjectProfile {
+        &self.profile
+    }
+
+    pub fn project_name(&self) -> &str {
+        &self.profile.project_name
+    }
+
     pub fn audit_log(&self) -> &TamperEvidentAuditLog {
         &self.audit_log
     }
