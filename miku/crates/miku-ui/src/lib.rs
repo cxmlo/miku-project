@@ -27,6 +27,7 @@ pub use miku_gatekeeper::{
 pub mod audit;
 pub mod avatar;
 pub mod demo;
+pub mod feed;
 pub mod gatekeeper;
 pub mod power;
 pub mod voice;
@@ -36,6 +37,7 @@ pub mod win32;
 pub use crate::audit::*;
 pub use crate::avatar::*;
 pub use crate::demo::*;
+pub use crate::feed::*;
 pub use crate::gatekeeper::*;
 pub use crate::power::*;
 pub use crate::voice::*;
@@ -45,7 +47,8 @@ pub use crate::win32::*;
 #[allow(unused_imports)]
 pub(crate) mod prelude {
     pub(crate) use crate::{
-        audit::*, avatar::*, demo::*, gatekeeper::*, power::*, voice::*, webview::*, win32::*,
+        audit::*, avatar::*, demo::*, feed::*, gatekeeper::*, power::*, voice::*, webview::*,
+        win32::*,
     };
     pub(crate) use miku_gatekeeper::{
         AuditEntry, CanonicalPathJail, Capability, DenyReason, GatekeeperEngine, GatekeeperVerdict,
