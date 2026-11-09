@@ -801,6 +801,18 @@ impl SingleThreadStoragePool {
         raw_query: &str,
         limit: usize,
     ) -> Result<Vec<Fts5SearchHit>, StorageError> {
+        self.search_fts5_filtered(raw_query, limit, |_| true)
+    }
+
+    pub fn search_fts5_filtered<F>(
+        &self,
+        raw_query: &str,
+        limit: usize,
+        mut accept_doc_id: F,
+    ) -> Result<Vec<Fts5SearchHit>, StorageError>
+    where
+        F: FnMut(&str) -> bool,
+    {
         let eng = self.inner.borrow();
         eng.ensure_table_migrated("memory_fts5")?;
         let query_terms = sanitize_fts5_query(raw_query);
@@ -854,7 +866,8 @@ impl SingleThreadStoragePool {
 
         let avgdl = (total_weighted_len / n_docs).max(1.0);
 
-        let mut hits: Vec<Fts5SearchHit> = Vec::with_capacity(scanned_docs.len());
+        let mut scored_docs: Vec<(&MemoryFts5Document, f64)> =
+            Vec::with_capacity(scanned_docs.len());
         for (doc, weighted_tfs, doc_len) in scanned_docs {
             let mut score = 0.0_f64;
             let mut matched_terms = 0usize;
@@ -872,25 +885,35 @@ impl SingleThreadStoragePool {
             if matched_terms > 0 {
                 // Boost documents that match more distinct query terms
                 score *= 1.0 + (matched_terms as f64) * 0.25;
-                let snippet = build_highlighted_snippet(&doc.body, &query_terms);
-                hits.push(Fts5SearchHit {
-                    doc_id: doc.doc_id.clone(),
-                    title: doc.title.clone(),
-                    tags: doc.tags.clone(),
-                    bm25_score: score,
-                    snippet,
-                    updated_at_ms: doc.updated_at_ms,
-                });
+                scored_docs.push((doc, score));
             }
         }
 
-        hits.sort_by(|a, b| {
-            b.bm25_score
-                .partial_cmp(&a.bm25_score)
+        scored_docs.sort_by(|(doc_a, score_a), (doc_b, score_b)| {
+            score_b
+                .partial_cmp(score_a)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.doc_id.cmp(&b.doc_id))
+                .then_with(|| doc_a.doc_id.cmp(&doc_b.doc_id))
         });
-        hits.truncate(limit);
+
+        let mut hits: Vec<Fts5SearchHit> = Vec::with_capacity(limit.min(scored_docs.len()));
+        for (doc, score) in scored_docs {
+            if !accept_doc_id(&doc.doc_id) {
+                continue;
+            }
+            let snippet = build_highlighted_snippet(&doc.body, &query_terms);
+            hits.push(Fts5SearchHit {
+                doc_id: doc.doc_id.clone(),
+                title: doc.title.clone(),
+                tags: doc.tags.clone(),
+                bm25_score: score,
+                snippet,
+                updated_at_ms: doc.updated_at_ms,
+            });
+            if hits.len() >= limit {
+                break;
+            }
+        }
         Ok(hits)
     }
 }

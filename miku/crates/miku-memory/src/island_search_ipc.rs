@@ -204,16 +204,22 @@ impl IslandMemorySearchController {
             .fts5_document_count()
             .map_err(MemoryError::from)?;
 
-        let fetch_window = (bounded_limit.saturating_mul(2)).max(bounded_limit);
-        let raw_hits = vault.search_authorized(
+        let (include_md, include_sess) = match req.filter {
+            IslandSearchFilter::All => (true, true),
+            IslandSearchFilter::MarkdownOnly => (true, false),
+            IslandSearchFilter::SessionsOnly => (false, true),
+        };
+        let raw_hits = vault.search_authorized_filtered(
             gatekeeper,
             req.agent_id.trim(),
             &req.raw_query,
-            fetch_window,
+            include_md,
+            include_sess,
+            bounded_limit,
             req.timestamp_ms,
         )?;
 
-        let mut results = Vec::with_capacity(bounded_limit);
+        let mut results = Vec::with_capacity(raw_hits.len());
         for hit in raw_hits {
             let is_session = hit.doc_id.starts_with(SESSION_DOC_ID_PREFIX);
             let source_kind = if is_session {
@@ -221,20 +227,6 @@ impl IslandMemorySearchController {
             } else {
                 IslandSearchSourceKind::MarkdownNote
             };
-
-            match req.filter {
-                IslandSearchFilter::All => {}
-                IslandSearchFilter::MarkdownOnly => {
-                    if source_kind != IslandSearchSourceKind::MarkdownNote {
-                        continue;
-                    }
-                }
-                IslandSearchFilter::SessionsOnly => {
-                    if source_kind != IslandSearchSourceKind::SessionHistory {
-                        continue;
-                    }
-                }
-            }
 
             let source_locator = if let Some(rel) = vault.relative_path_for_doc(&hit.doc_id) {
                 rel.to_string()
@@ -256,10 +248,6 @@ impl IslandMemorySearchController {
                 )),
                 updated_at_ms: hit.updated_at_ms,
             });
-
-            if results.len() >= bounded_limit {
-                break;
-            }
         }
 
         let search_latency_ms = t0.elapsed().as_secs_f64() * 1_000.0;

@@ -296,35 +296,46 @@ impl MarkdownMemoryVault {
         limit: usize,
         now_ms: u64,
     ) -> Result<Vec<Fts5SearchHit>, MemoryError> {
-        let sanitized_terms = sanitize_fts5_query(raw_query);
-        if sanitized_terms.is_empty() || limit == 0 {
+        self.search_authorized_filtered(gatekeeper, agent, raw_query, true, true, limit, now_ms)
+    }
+
+    /// Executes a type-filtered BM25 search where source-kind filtering and Gatekeeper
+    /// authorization are applied before `limit` truncation.
+    pub fn search_authorized_filtered(
+        &mut self,
+        gatekeeper: &mut GatekeeperEngine,
+        agent: &str,
+        raw_query: &str,
+        include_markdown: bool,
+        include_sessions: bool,
+        limit: usize,
+        now_ms: u64,
+    ) -> Result<Vec<Fts5SearchHit>, MemoryError> {
+        if limit == 0 || (!include_markdown && !include_sessions) {
             return Ok(Vec::new());
         }
-
-        let candidate_limit = (limit.saturating_mul(3)).max(limit);
-        let raw_hits = self.storage().search_fts5(raw_query, candidate_limit)?;
-        let mut authorized_hits = Vec::with_capacity(limit.min(raw_hits.len()));
-
-        for hit in raw_hits {
-            if let Some(rel_path) = self.doc_to_relative_path.get(&hit.doc_id).cloned() {
+        let storage = self.context_engine.storage();
+        let doc_to_rel = &self.doc_to_relative_path;
+        let hits = storage.search_fts5_filtered(raw_query, limit, |doc_id| {
+            let is_session = doc_id.starts_with(SESSION_DOC_ID_PREFIX);
+            if (is_session && !include_sessions) || (!is_session && !include_markdown) {
+                return false;
+            }
+            if let Some(rel_path) = doc_to_rel.get(doc_id) {
                 let verdict = gatekeeper.evaluate_request(
                     agent,
                     Capability::FsRead,
-                    &rel_path,
+                    rel_path,
                     "miku_memory_search_hit",
                     now_ms,
                 );
                 if !matches!(verdict, GatekeeperVerdict::Allow { .. }) {
-                    continue;
+                    return false;
                 }
             }
-            authorized_hits.push(hit);
-            if authorized_hits.len() >= limit {
-                break;
-            }
-        }
-
-        Ok(authorized_hits)
+            true
+        })?;
+        Ok(hits)
     }
 
     /// Retrieves and injects ONLY relevant memory fragments on demand when the query requires it,
@@ -530,38 +541,29 @@ fn format_markdown_note(title: &str, tags: &str, body: &str) -> String {
 }
 
 fn extract_markdown_title(raw_md: &str, fallback_path: &str) -> String {
-    for line in raw_md.lines() {
-        if let Some(h1) = line.trim().strip_prefix("# ") {
-            let clean = h1.trim();
-            if !clean.is_empty() {
-                return clean.to_string();
-            }
-        }
-    }
-    fallback_path.to_string()
+    raw_md
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("# ").map(str::trim))
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| fallback_path.to_string())
 }
 
 fn extract_markdown_tags(raw_md: &str, fallback_tags: &str) -> String {
-    for line in raw_md.lines().take(8) {
-        if let Some(rest) = line.trim().strip_prefix("<!-- miku-tags:") {
-            if let Some(inner) = rest.strip_suffix("-->") {
-                let clean = inner.trim();
-                if !clean.is_empty() {
-                    return clean.to_string();
-                }
-            }
-        }
-    }
-    fallback_tags.to_string()
+    raw_md
+        .lines()
+        .take(8)
+        .find_map(|line| line.trim().strip_prefix("<!-- miku-tags:")?.strip_suffix("-->"))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| fallback_tags.to_string())
 }
 
 fn query_requires_memory_lookup(raw_query: &str) -> bool {
     let terms = sanitize_fts5_query(raw_query);
-    if terms.is_empty() {
-        return false;
-    }
     let trivial = ["hola", "buenos", "dias", "gracias", "ok", "vale", "hello"];
-    !(terms.len() == 1 && trivial.contains(&terms[0].as_str()))
+    !terms.is_empty() && !(terms.len() == 1 && trivial.contains(&terms[0].as_str()))
 }
 
 fn collect_markdown_files_recursively(
@@ -569,22 +571,15 @@ fn collect_markdown_files_recursively(
     current_dir: &Path,
     out: &mut BTreeSet<String>,
 ) -> Result<(), MemoryError> {
-    let entries = fs::read_dir(current_dir).map_err(|_| {
-        MemoryError::StorageFailure("failed to read vault directory entries".to_string())
-    })?;
+    let entries = fs::read_dir(current_dir)
+        .map_err(|_| MemoryError::StorageFailure("failed to read vault directory entries".to_string()))?;
     for entry in entries {
-        let entry = entry.map_err(|_| {
-            MemoryError::StorageFailure("failed to read directory entry".to_string())
-        })?;
-        let path = entry.path();
+        let path = entry
+            .map_err(|_| MemoryError::StorageFailure("failed to read directory entry".to_string()))?
+            .path();
         if path.is_dir() {
             collect_markdown_files_recursively(project_root, &path, out)?;
-        } else if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("md"))
-            .unwrap_or(false)
-        {
+        } else if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("md")).unwrap_or(false) {
             if let Ok(rel) = path.strip_prefix(project_root) {
                 let rel_str = normalize_rel_path(&rel.to_string_lossy());
                 if !rel_str.is_empty() {
