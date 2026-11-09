@@ -1,0 +1,15 @@
+schema_version = 1
+
+[skill]
+id = "repo-status-inspector"
+name = "Repository Status Inspector"
+version = "1.0.0"
+description = "Read-only workspace manifest and repository hygiene inspector confined inside CanonicalPathJail."
+entrypoint = "README.md"
+capabilities = ["fs_read"]
+allowed_targets = ["Cargo.toml", "crates/**", "README.md"]
+
+[limits]
+timeout_ms = 2000
+max_output_bytes = 32768
+isolated_process = true

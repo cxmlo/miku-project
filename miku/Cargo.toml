@@ -12,6 +12,7 @@ members = [
     "crates/miku-cli",
     "crates/miku-ui",
     "crates/miku-mcp",
+    "crates/miku-skills",
 ]
 
 [workspace.package]

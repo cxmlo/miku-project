@@ -1,0 +1,15 @@
+schema_version = 1
+
+[skill]
+id = "cargo-test-runner"
+name = "Bounded Cargo Test Runner"
+version = "1.2.0"
+description = "Executes bounded cargo test and cargo check commands under Gatekeeper supervision with output truncation and process timeout."
+entrypoint = "README.md"
+capabilities = ["fs_read", "shell"]
+allowed_targets = ["cargo test*", "cargo check*", "crates/**"]
+
+[limits]
+timeout_ms = 5000
+max_output_bytes = 65536
+isolated_process = true
