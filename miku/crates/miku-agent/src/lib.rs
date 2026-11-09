@@ -20,6 +20,7 @@ pub mod bridge;
 pub mod catalog;
 pub mod claude_adapter;
 pub mod claude_tracker_and_telemetry;
+pub mod custom_agents;
 pub mod harness;
 pub mod secrets;
 pub mod session_manager;
@@ -30,6 +31,7 @@ pub use adapters::*;
 pub use bridge::*;
 pub use catalog::*;
 pub use claude_adapter::*;
+pub use custom_agents::*;
 pub use harness::{
     repair_tool_call_json, AgentHarness, HarnessConfig, HarnessError, LlmProvider,
     ToolCallRequest, ToolJsonRepairError, TurnStepOutcome,
