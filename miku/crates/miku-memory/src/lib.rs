@@ -493,6 +493,26 @@ impl ContextEngine {
         self.chunk_cache.get(chunk_id)
     }
 
+    pub fn chunk_cache(&self) -> &BTreeMap<String, ContentChunk> {
+        &self.chunk_cache
+    }
+
+    pub fn insert_cached_chunk(&mut self, chunk: ContentChunk) {
+        self.chunk_cache.insert(chunk.chunk_id.clone(), chunk);
+    }
+
+    pub fn remove_cached_chunk(&mut self, chunk_id: &str) -> Option<ContentChunk> {
+        self.chunk_cache.remove(chunk_id)
+    }
+
+    pub fn clear_cached_chunks(&mut self) {
+        self.chunk_cache.clear();
+    }
+
+    pub fn max_lines_per_chunk(&self) -> usize {
+        self.max_lines_per_chunk
+    }
+
     pub fn ingest_document_with_gatekeeper(
         &mut self,
         gatekeeper: &mut GatekeeperEngine,
@@ -590,6 +610,12 @@ impl ContextEngine {
         )
     }
 }
+
+pub mod island_search_ipc;
+pub mod markdown_vault;
+
+#[cfg(test)]
+mod memory_search_tests;
 
 #[cfg(test)]
 mod tests {

@@ -541,6 +541,17 @@ impl SingleThreadStoragePool {
         Ok(eng.active_snapshot().sessions.get(session_id).cloned())
     }
 
+    pub fn list_all_sessions(&self) -> Result<Vec<SessionRecord>, StorageError> {
+        let eng = self.inner.borrow();
+        eng.ensure_table_migrated("sessions")?;
+        Ok(eng
+            .active_snapshot()
+            .sessions
+            .values()
+            .cloned()
+            .collect())
+    }
+
     pub fn delete_session(&self, session_id: &str) -> Result<usize, StorageError> {
         let mut eng = self.inner.borrow_mut();
         eng.ensure_table_migrated("sessions")?;
@@ -754,6 +765,37 @@ impl SingleThreadStoragePool {
         eng.persist_wal_frame_if_needed()
     }
 
+    pub fn delete_fts5_document(&self, doc_id: &str) -> Result<bool, StorageError> {
+        let mut eng = self.inner.borrow_mut();
+        eng.ensure_table_migrated("memory_fts5")?;
+        let removed = eng
+            .active_snapshot_mut()
+            .fts_documents
+            .remove(doc_id)
+            .is_some();
+        if removed {
+            eng.persist_wal_frame_if_needed()?;
+        }
+        Ok(removed)
+    }
+
+    pub fn clear_fts5_documents(&self) -> Result<usize, StorageError> {
+        let mut eng = self.inner.borrow_mut();
+        eng.ensure_table_migrated("memory_fts5")?;
+        let count = eng.active_snapshot().fts_documents.len();
+        if count > 0 {
+            eng.active_snapshot_mut().fts_documents.clear();
+            eng.persist_wal_frame_if_needed()?;
+        }
+        Ok(count)
+    }
+
+    pub fn fts5_document_count(&self) -> Result<usize, StorageError> {
+        let eng = self.inner.borrow();
+        eng.ensure_table_migrated("memory_fts5")?;
+        Ok(eng.active_snapshot().fts_documents.len())
+    }
+
     pub fn search_fts5(
         &self,
         raw_query: &str,
@@ -772,53 +814,55 @@ impl SingleThreadStoragePool {
         }
 
         let n_docs = docs_map.len() as f64;
+        let n_terms = query_terms.len();
         let k1 = 1.2_f64;
         let b = 0.75_f64;
 
-        let mut tokenized_docs: Vec<(&MemoryFts5Document, Vec<String>, Vec<String>, Vec<String>, f64)> =
+        let mut scanned_docs: Vec<(&MemoryFts5Document, Vec<f64>, f64)> =
             Vec::with_capacity(docs_map.len());
+        let mut df_counts: Vec<usize> = vec![0usize; n_terms];
         let mut total_weighted_len = 0.0_f64;
+        let mut token_buf = String::with_capacity(64);
+        let mut title_tfs = vec![0usize; n_terms];
+        let mut tags_tfs = vec![0usize; n_terms];
+        let mut body_tfs = vec![0usize; n_terms];
 
         for doc in docs_map.values() {
-            let t_tokens = tokenize_lexical(&doc.title);
-            let g_tokens = tokenize_lexical(&doc.tags);
-            let b_tokens = tokenize_lexical(&doc.body);
+            let t_len = scan_lexical_field(&doc.title, &query_terms, &mut title_tfs, &mut token_buf);
+            let g_len = scan_lexical_field(&doc.tags, &query_terms, &mut tags_tfs, &mut token_buf);
+            let b_len = scan_lexical_field(&doc.body, &query_terms, &mut body_tfs, &mut token_buf);
             let weighted_len =
-                (t_tokens.len() as f64) * 3.0 + (g_tokens.len() as f64) * 2.0 + (b_tokens.len() as f64);
-            total_weighted_len += weighted_len.max(1.0);
-            tokenized_docs.push((doc, t_tokens, g_tokens, b_tokens, weighted_len.max(1.0)));
+                ((t_len as f64) * 3.0 + (g_len as f64) * 2.0 + (b_len as f64)).max(1.0);
+            total_weighted_len += weighted_len;
+
+            let mut weighted_tfs = vec![0.0_f64; n_terms];
+            let mut any_match = false;
+            for idx in 0..n_terms {
+                let wtf = (title_tfs[idx] as f64) * 3.0
+                    + (tags_tfs[idx] as f64) * 2.0
+                    + (body_tfs[idx] as f64) * 1.0;
+                if wtf > 0.0 {
+                    df_counts[idx] += 1;
+                    weighted_tfs[idx] = wtf;
+                    any_match = true;
+                }
+            }
+            if any_match {
+                scanned_docs.push((doc, weighted_tfs, weighted_len));
+            }
         }
 
         let avgdl = (total_weighted_len / n_docs).max(1.0);
 
-        let mut df_map: BTreeMap<String, usize> = BTreeMap::new();
-        for term in &query_terms {
-            let mut df = 0usize;
-            for (_, t_tok, g_tok, b_tok, _) in &tokenized_docs {
-                if t_tok.iter().any(|w| w == term)
-                    || g_tok.iter().any(|w| w == term)
-                    || b_tok.iter().any(|w| w == term)
-                {
-                    df += 1;
-                }
-            }
-            df_map.insert(term.clone(), df);
-        }
-
-        let mut hits: Vec<Fts5SearchHit> = Vec::new();
-        for (doc, t_tok, g_tok, b_tok, doc_len) in tokenized_docs {
+        let mut hits: Vec<Fts5SearchHit> = Vec::with_capacity(scanned_docs.len());
+        for (doc, weighted_tfs, doc_len) in scanned_docs {
             let mut score = 0.0_f64;
             let mut matched_terms = 0usize;
 
-            for term in &query_terms {
-                let tf_title = t_tok.iter().filter(|w| *w == term).count() as f64;
-                let tf_tags = g_tok.iter().filter(|w| *w == term).count() as f64;
-                let tf_body = b_tok.iter().filter(|w| *w == term).count() as f64;
-                let weighted_tf = tf_title * 3.0 + tf_tags * 2.0 + tf_body * 1.0;
-
+            for (idx, &weighted_tf) in weighted_tfs.iter().enumerate() {
                 if weighted_tf > 0.0 {
                     matched_terms += 1;
-                    let df = *df_map.get(term).unwrap_or(&0) as f64;
+                    let df = df_counts[idx] as f64;
                     let idf = ((n_docs - df + 0.5) / (df + 0.5) + 1.0).ln();
                     let denom = weighted_tf + k1 * (1.0 - b + b * (doc_len / avgdl));
                     score += idf * ((weighted_tf * (k1 + 1.0)) / denom);
@@ -939,6 +983,50 @@ pub fn tokenize_lexical(input: &str) -> Vec<String> {
         }
     }
     tokens
+}
+
+fn scan_lexical_field(
+    input: &str,
+    query_terms: &[String],
+    term_counts: &mut [usize],
+    token_buf: &mut String,
+) -> usize {
+    for c in term_counts.iter_mut() {
+        *c = 0;
+    }
+    token_buf.clear();
+    let mut total_tokens = 0usize;
+
+    for ch in input.chars() {
+        let folded = fold_spanish_diacritic(ch);
+        if folded.is_ascii_alphanumeric() || folded == '_' || folded == '-' {
+            token_buf.push(folded.to_ascii_lowercase());
+        } else if !token_buf.is_empty() {
+            let trimmed = token_buf.trim_matches(|c| c == '-' || c == '_');
+            if !trimmed.is_empty() {
+                total_tokens += 1;
+                for (idx, term) in query_terms.iter().enumerate() {
+                    if trimmed == term.as_str() {
+                        term_counts[idx] += 1;
+                    }
+                }
+            }
+            token_buf.clear();
+        }
+    }
+    if !token_buf.is_empty() {
+        let trimmed = token_buf.trim_matches(|c| c == '-' || c == '_');
+        if !trimmed.is_empty() {
+            total_tokens += 1;
+            for (idx, term) in query_terms.iter().enumerate() {
+                if trimmed == term.as_str() {
+                    term_counts[idx] += 1;
+                }
+            }
+        }
+        token_buf.clear();
+    }
+    total_tokens
 }
 
 fn fold_spanish_diacritic(ch: char) -> char {
