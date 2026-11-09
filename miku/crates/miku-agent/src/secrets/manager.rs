@@ -50,6 +50,7 @@ pub struct SecretManager {
     gatekeeper: GatekeeperEngine,
     metadata_catalog: BTreeMap<String, SecretMetadata>,
     cache: HashMap<String, Zeroizing<Vec<u8>>>,
+    authorized_read_attempts: u64,
 }
 
 impl SecretManager {
@@ -64,7 +65,14 @@ impl SecretManager {
             gatekeeper,
             metadata_catalog: BTreeMap::new(),
             cache: HashMap::new(),
+            authorized_read_attempts: 0,
         }
+    }
+
+    /// Returns the total number of times `get_secret_authorized` was invoked.
+    /// Used to verify that 0-token local routing and 100% budget hard caps abort BEFORE reading any key.
+    pub fn authorized_read_attempts(&self) -> u64 {
+        self.authorized_read_attempts
     }
 
     /// Configures or updates a secret key under the specified alias.
@@ -120,6 +128,8 @@ impl SecretManager {
         alias: &str,
         session_token: &str,
     ) -> Result<Zeroizing<Vec<u8>>, SecretError> {
+        self.authorized_read_attempts = self.authorized_read_attempts.saturating_add(1);
+
         // 1. Session token validation must precede any secret operation
         if !constant_time_token_eq(session_token, &self.expected_session_token) {
             return Err(SecretError::UnauthorizedSessionToken);

@@ -24,6 +24,7 @@ pub mod harness;
 pub mod secrets;
 pub mod session_manager;
 pub mod session_queue;
+pub mod token_saver;
 
 pub use adapters::*;
 pub use bridge::*;
@@ -36,6 +37,7 @@ pub use harness::{
 pub use secrets::*;
 pub use session_manager::*;
 pub use session_queue::*;
+pub use token_saver::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

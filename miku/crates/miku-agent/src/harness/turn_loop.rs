@@ -3,17 +3,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use miku_gatekeeper::GatekeeperEngine;
+use miku_memory::StaticSystemPrefix;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 use crate::harness::json_repair::repair_tool_call_json;
 use crate::harness::providers::{
-    format_provider_request, parse_provider_response, sanitize_text_with_secrets,
-    send_provider_http_post, ProviderResponse,
+     parse_provider_response, sanitize_text_with_secrets, send_provider_http_post, ProviderResponse,
 };
 use crate::harness::types::{HarnessConfig, HarnessError, ToolCallRequest, TurnStepOutcome};
 use crate::secrets::manager::SecretManager;
 use crate::session_manager::AgentSessionManager;
+use crate::token_saver::{
+    build_static_system_prefix_from_registry, extract_or_estimate_token_usage,
+    format_provider_request_with_stable_prefix, BudgetWarningAlert, DailySpendTracker,
+    FallbackAlternative, LocalIntentRouter, LocalSystemSnapshot, PreFlightBudgetDecision,
+    RouteDecision,
+};
 use crate::{
     CooperativeCancelHandle, ToolDispatchOutcome, ToolError, ToolInvocationRequest,
     ToolRegistry,
@@ -21,13 +27,15 @@ use crate::{
 
 /// Production Agent Execution Harness (F-06, F-08, F-09).
 /// Enforces bounded iteration limits (max_steps), automatic key rotation on 429/5xx,
-/// strict tool JSON repair with fail-closed semantics, and zero secret leakage.
+/// strict tool JSON repair with fail-closed semantics, zero secret leakage,
+/// 0-token local intent routing, byte-stable KV-cache prefix, and per-project daily budget caps.
 pub struct AgentHarness {
     pub config: HarnessConfig,
     pub secret_manager: Arc<Mutex<SecretManager>>,
     pub session_manager: AgentSessionManager,
     pub session_id: String,
     pub session_token: String,
+    pub project_id: String,
     pub current_key_index: usize,
     pub current_step: usize,
     pub conversation_history: Vec<(String, String)>,
@@ -35,6 +43,14 @@ pub struct AgentHarness {
     pub pending_tool_calls: VecDeque<ToolCallRequest>,
     pub simulated_tool_handler:
         Option<Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync>>,
+    pub local_routing_enabled: bool,
+    pub local_snapshot: LocalSystemSnapshot,
+    pub static_prefix: Option<StaticSystemPrefix>,
+    pub prefix_cached_in_session: bool,
+    pub last_request_payload: Vec<u8>,
+    pub spend_tracker: Option<Arc<Mutex<DailySpendTracker>>>,
+    pub last_budget_warning: Option<BudgetWarningAlert>,
+    pub last_blocked_alternatives: Vec<FallbackAlternative>,
 }
 
 impl AgentHarness {
@@ -46,6 +62,10 @@ impl AgentHarness {
         session_id: &str,
         session_token: &str,
     ) -> Self {
+        let project_id = gatekeeper.profile().name.clone();
+        let mut local_snapshot = LocalSystemSnapshot::default();
+        local_snapshot.project_id = project_id.clone();
+        local_snapshot.active_model_display = config.model.clone();
         let session_manager =
             AgentSessionManager::new(tool_registry, gatekeeper, session_token.to_string());
         Self {
@@ -54,12 +74,21 @@ impl AgentHarness {
             session_manager,
             session_id: session_id.to_string(),
             session_token: session_token.to_string(),
+            project_id,
             current_key_index: 0,
             current_step: 0,
             conversation_history: Vec::new(),
             needs_confirmation: false,
             pending_tool_calls: VecDeque::new(),
             simulated_tool_handler: None,
+            local_routing_enabled: true,
+            local_snapshot,
+            static_prefix: None,
+            prefix_cached_in_session: false,
+            last_request_payload: Vec::new(),
+            spend_tracker: None,
+            last_budget_warning: None,
+            last_blocked_alternatives: Vec::new(),
         }
     }
 
@@ -68,6 +97,31 @@ impl AgentHarness {
         F: Fn(&str, &str) -> Result<String, String> + Send + Sync + 'static,
     {
         self.simulated_tool_handler = Some(Arc::new(handler));
+    }
+
+    /// Configures a deterministic `StaticSystemPrefix` (from `miku-memory` Step 1.6)
+    /// using the agent's soul directives and sorted tool registry.
+    pub fn set_static_system_prefix_from_directives(&mut self, soul_directives: &str) {
+        let prefix = build_static_system_prefix_from_registry(
+            &self.session_id,
+            soul_directives,
+            self.session_manager.registry(),
+        );
+        self.static_prefix = Some(prefix);
+        self.prefix_cached_in_session = false;
+    }
+
+    pub fn set_spend_tracker(&mut self, tracker: Arc<Mutex<DailySpendTracker>>) {
+        self.spend_tracker = Some(tracker);
+    }
+
+    /// Switches the harness to a free or local fallback alternative when paid daily budget reaches 100%.
+    pub fn switch_to_fallback_alternative(&mut self, alternative: &FallbackAlternative) {
+        self.config.provider = alternative.provider;
+        self.config.model = alternative.model.clone();
+        self.config.endpoint_url = alternative.endpoint_url.clone();
+        self.config.key_aliases.clear();
+        self.local_snapshot.active_model_display = alternative.model.clone();
     }
 
     pub fn tool_registry(&self) -> &ToolRegistry {
@@ -119,7 +173,7 @@ impl AgentHarness {
         &mut self,
         payload: &[u8],
         cancel_handle: Option<&CooperativeCancelHandle>,
-    ) -> Result<ProviderResponse, HarnessError> {
+    ) -> Result<(ProviderResponse, Vec<u8>), HarnessError> {
         let total_keys = self.config.key_aliases.len();
         if total_keys == 0 {
             // Ollama local or unauthenticated provider
@@ -132,7 +186,8 @@ impl AgentHarness {
             )
             .await?;
             if (200..300).contains(&status) {
-                return parse_provider_response(self.config.provider, &body);
+                let parsed = parse_provider_response(self.config.provider, &body)?;
+                return Ok((parsed, body));
             } else {
                 let body_sanitized =
                     sanitize_text_with_secrets(&String::from_utf8_lossy(&body), &[]);
@@ -180,13 +235,11 @@ impl AgentHarness {
                 Ok((status, body)) => {
                     last_status = status;
                     if (200..300).contains(&status) {
-                        // Success! Update current_key_index to the successful one
                         self.current_key_index = alias_idx;
-                        return parse_provider_response(self.config.provider, &body).map_err(
-                            |e| self.sanitize_error(e, secret_buf.as_slice()),
-                        );
+                        let parsed = parse_provider_response(self.config.provider, &body)
+                            .map_err(|e| self.sanitize_error(e, secret_buf.as_slice()))?;
+                        return Ok((parsed, body));
                     } else if status == 429 || (500..=599).contains(&status) {
-                        // Rate limited (429) or transient server error (5xx): rotate key with bounded backoff
                         if attempt + 1 < total_keys {
                             if backoff_ms > 0 {
                                 sleep(Duration::from_millis(backoff_ms)).await;
@@ -196,7 +249,6 @@ impl AgentHarness {
                             continue;
                         }
                     } else {
-                        // 4xx client errors (e.g. 400 Bad Request, 401 Unauthorized, etc.)
                         let body_sanitized = sanitize_text_with_secrets(
                             &String::from_utf8_lossy(&body),
                             &[secret_buf.as_slice()],
@@ -228,21 +280,68 @@ impl AgentHarness {
         })
     }
 
-    /// Executes an agent turn with bounded step iteration.
-    /// Halts and requests user confirmation if `current_step >= max_steps`.
+    /// Executes an agent turn with bounded step iteration and 0-token local routing.
     pub async fn execute_turn(
         &mut self,
         user_prompt: &str,
         cancel_handle: Option<&CooperativeCancelHandle>,
     ) -> Result<TurnStepOutcome, HarnessError> {
-        self.conversation_history
-            .push(("user".to_string(), user_prompt.to_string()));
+        self.execute_turn_with_options(user_prompt, false, cancel_handle)
+            .await
+    }
+
+    /// Executes an agent turn allowing explicit `force_llm` override (bypassing local 0-token router
+    /// while still enforcing the per-project daily budget hard cap).
+    pub async fn execute_turn_with_options(
+        &mut self,
+        user_prompt: &str,
+        force_llm: bool,
+        cancel_handle: Option<&CooperativeCancelHandle>,
+    ) -> Result<TurnStepOutcome, HarnessError> {
+        if self.local_routing_enabled {
+            if let Some(ref tracker_arc) = self.spend_tracker {
+                let mut tracker = tracker_arc.lock().await;
+                let snap = tracker.snapshot(&self.project_id);
+                self.local_snapshot.daily_spent_micros = snap.spent_micros;
+                self.local_snapshot.daily_limit_micros = snap.limit_micros;
+            }
+            match LocalIntentRouter::classify_and_route(
+                user_prompt,
+                force_llm,
+                &self.local_snapshot,
+            ) {
+                RouteDecision::LocalZeroToken(local_match) => {
+                    if let Some(ref tracker_arc) = self.spend_tracker {
+                        let mut tracker = tracker_arc.lock().await;
+                        tracker.record_local_zero_token_hit(&self.project_id);
+                    }
+                    self.conversation_history
+                        .push(("user".to_string(), user_prompt.to_string()));
+                    self.conversation_history
+                        .push(("assistant".to_string(), local_match.reply.clone()));
+                    return Ok(TurnStepOutcome::LocalZeroTokenReply {
+                        category: local_match.category.as_str().to_string(),
+                        intent_id: local_match.intent_id,
+                        reply: local_match.reply,
+                        tokens_used: local_match.tokens_used,
+                    });
+                }
+                RouteDecision::ForwardToLlm {
+                    stripped_prompt, ..
+                } => {
+                    self.conversation_history
+                        .push(("user".to_string(), stripped_prompt));
+                }
+            }
+        } else {
+            self.conversation_history
+                .push(("user".to_string(), user_prompt.to_string()));
+        }
 
         self.run_turn_loop(cancel_handle).await
     }
 
     /// Resumes execution after the user approves additional steps beyond the original max_steps.
-    /// Invariant: Uses `saturating_add` to prevent arithmetic overflow on boundary updates.
     pub async fn confirm_and_resume(
         &mut self,
         additional_steps: usize,
@@ -295,25 +394,76 @@ impl AgentHarness {
                 });
             }
 
-            let payload = format_provider_request(
+            // 3. F-09 Pre-flight Daily Spend Evaluation BEFORE reading secrets or opening sockets
+            if let Some(ref tracker_arc) = self.spend_tracker {
+                let decision = tracker_arc.lock().await.evaluate_pre_flight(
+                    &self.project_id,
+                    self.config.provider,
+                    &self.config.model,
+                );
+                match decision {
+                    PreFlightBudgetDecision::BlockedHardCap {
+                        project_id, day_key, spent_micros, limit_micros, alternatives, ..
+                    } => {
+                        let suggested_alternatives =
+                            alternatives.iter().map(|a| a.label.clone()).collect();
+                        self.last_blocked_alternatives = alternatives;
+                        return Err(HarnessError::DailyBudgetExceeded {
+                            project_id, day_key, spent_micros, limit_micros, suggested_alternatives,
+                        });
+                    }
+                    PreFlightBudgetDecision::Allowed { warning, .. } => {
+                        if warning.is_some() {
+                            self.last_budget_warning = warning;
+                        }
+                    }
+                }
+            }
+
+            let payload = format_provider_request_with_stable_prefix(
                 self.config.provider,
                 &self.config.model,
+                self.static_prefix.as_ref(),
                 &self.conversation_history,
             );
+            self.last_request_payload = payload.clone();
 
-            let model_response = self
+            let (model_response, raw_response_body) = self
                 .call_model_with_key_rotation(&payload, cancel_handle)
                 .await?;
+
+            if let Some(ref tracker_arc) = self.spend_tracker {
+                let dynamic_text = self.conversation_history.last().map(|(_, c)| c.as_str()).unwrap_or("");
+                let reply_str = match &model_response {
+                    ProviderResponse::Text(t) => t.as_str(),
+                    ProviderResponse::ToolCalls(_) => "tool_call",
+                };
+                let usage = extract_or_estimate_token_usage(
+                    &raw_response_body,
+                    self.static_prefix.as_ref(),
+                    dynamic_text,
+                    reply_str,
+                    self.prefix_cached_in_session,
+                );
+                let (_cost, post_warning) = tracker_arc.lock().await.record_turn_usage(
+                    &self.project_id,
+                    self.config.provider,
+                    &self.config.model,
+                    usage,
+                );
+                if post_warning.is_some() {
+                    self.last_budget_warning = post_warning;
+                }
+            }
+            if self.static_prefix.is_some() {
+                self.prefix_cached_in_session = true;
+            }
 
             match model_response {
                 ProviderResponse::Text(reply) => {
                     self.current_step += 1;
-                    self.conversation_history
-                        .push(("assistant".to_string(), reply.clone()));
-                    return Ok(TurnStepOutcome::Completed {
-                        reply,
-                        total_steps: self.current_step,
-                    });
+                    self.conversation_history.push(("assistant".to_string(), reply.clone()));
+                    return Ok(TurnStepOutcome::Completed { reply, total_steps: self.current_step });
                 }
                 ProviderResponse::ToolCalls(tools) => {
                     for tc in tools {
@@ -325,23 +475,17 @@ impl AgentHarness {
     }
 
     /// Dispatches a tool invocation through the real AgentSessionManager.
-    /// Preserves Gatekeeper evaluation, token verification, SHA-256 audit log chaining,
-    /// and fail-closed error reporting if tool is unregistered or denied.
     pub async fn dispatch_tool_call(
         &mut self,
         tool_call: &ToolCallRequest,
     ) -> Result<String, HarnessError> {
-        // 1. Repair and validate JSON arguments fail-closed
         let repaired_val = repair_tool_call_json(&tool_call.raw_args).map_err(|e| {
             HarnessError::IrreparableToolJson {
                 tool_name: tool_call.tool_name.clone(),
                 detail: e.to_string(),
             }
         })?;
-
         let canonical_args = repaired_val.to_string();
-
-        // 2. Extract target if present, defaulting to "."
         let target = repaired_val
             .get("target")
             .or_else(|| repaired_val.get("path"))
@@ -349,16 +493,13 @@ impl AgentHarness {
             .unwrap_or(".")
             .to_string();
 
-        // 3. Handle simulated tool handler if configured for testing
         if let Some(ref handler) = self.simulated_tool_handler {
-            let _ = self
-                .session_manager
-                .registry()
-                .get(&tool_call.tool_name)
-                .map_err(|e| HarnessError::ToolExecutionFailed {
+            let _ = self.session_manager.registry().get(&tool_call.tool_name).map_err(|e| {
+                HarnessError::ToolExecutionFailed {
                     tool_name: tool_call.tool_name.clone(),
                     detail: e.to_string(),
-                })?;
+                }
+            })?;
             return handler(&tool_call.tool_name, &canonical_args).map_err(|e| {
                 HarnessError::ToolExecutionFailed {
                     tool_name: tool_call.tool_name.clone(),
@@ -367,7 +508,6 @@ impl AgentHarness {
             });
         }
 
-        // 4. Dispatch through real AgentSessionManager
         let task_id = format!("task-{}-step-{}", self.session_id, self.current_step);
         let request = ToolInvocationRequest {
             task_id,
@@ -383,49 +523,31 @@ impl AgentHarness {
 
         let dispatch_result = self.session_manager.dispatch_immediate(request).await;
         match dispatch_result {
-            Ok(ToolDispatchOutcome::Completed(output)) => {
-                match tool_call.tool_name.as_str() {
-                    "fs_read" => {
-                        let path = &output.canonical_target;
-                        match std::fs::read_to_string(path) {
-                            Ok(content) => Ok(content),
-                            Err(e) => Err(HarnessError::ToolExecutionFailed {
-                                tool_name: tool_call.tool_name.clone(),
-                                detail: format!("failed to read file '{}': {}", path, e),
-                            }),
-                        }
-                    }
-                    _ => Err(HarnessError::ToolExecutionFailed {
+            Ok(ToolDispatchOutcome::Completed(output)) => match tool_call.tool_name.as_str() {
+                "fs_read" => {
+                    let path = &output.canonical_target;
+                    std::fs::read_to_string(path).map_err(|e| HarnessError::ToolExecutionFailed {
                         tool_name: tool_call.tool_name.clone(),
-                        detail: format!(
-                            "tool executor for '{}' is not implemented",
-                            tool_call.tool_name
-                        ),
-                    }),
+                        detail: format!("failed to read file '{}': {}", path, e),
+                    })
                 }
+                _ => Err(HarnessError::ToolExecutionFailed {
+                    tool_name: tool_call.tool_name.clone(),
+                    detail: format!("tool executor for '{}' is not implemented", tool_call.tool_name),
+                }),
+            },
+            Ok(ToolDispatchOutcome::Denied { reason, detail, audit_seq, audit_hash, .. }) => {
+                Err(HarnessError::GatekeeperDenied(format!(
+                    "{}: {} (audit_seq={}, audit_hash={})",
+                    reason.as_code(), detail, audit_seq, audit_hash
+                )))
             }
-            Ok(ToolDispatchOutcome::Denied {
-                reason,
-                detail,
-                audit_seq,
-                audit_hash,
-                ..
-            }) => Err(HarnessError::GatekeeperDenied(format!(
-                "{}: {} (audit_seq={}, audit_hash={})",
-                reason.as_code(),
-                detail,
-                audit_seq,
-                audit_hash
-            ))),
-            Ok(ToolDispatchOutcome::SuspendedAsk {
-                ticket,
-                audit_seq,
-                audit_hash,
-                ..
-            }) => Err(HarnessError::GatekeeperDenied(format!(
-                "confirmation_pending: req_hash={} (audit_seq={}, audit_hash={})",
-                ticket.req_hash, audit_seq, audit_hash
-            ))),
+            Ok(ToolDispatchOutcome::SuspendedAsk { ticket, audit_seq, audit_hash, .. }) => {
+                Err(HarnessError::GatekeeperDenied(format!(
+                    "confirmation_pending: req_hash={} (audit_seq={}, audit_hash={})",
+                    ticket.req_hash, audit_seq, audit_hash
+                )))
+            }
             Ok(ToolDispatchOutcome::Cancelled { .. }) => Err(HarnessError::Cancelled),
             Ok(ToolDispatchOutcome::Unauthorized { .. }) => Err(HarnessError::GatekeeperDenied(
                 "unauthorized: session token mismatch".to_string(),

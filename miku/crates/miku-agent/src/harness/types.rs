@@ -102,6 +102,13 @@ pub enum HarnessError {
     SecretStoreError(String),
     GatekeeperDenied(String),
     NetworkError(String),
+    DailyBudgetExceeded {
+        project_id: String,
+        day_key: String,
+        spent_micros: u64,
+        limit_micros: u64,
+        suggested_alternatives: Vec<String>,
+    },
     Cancelled,
 }
 
@@ -148,6 +155,17 @@ impl std::fmt::Display for HarnessError {
             HarnessError::SecretStoreError(msg) => write!(f, "secret store error: {}", msg),
             HarnessError::GatekeeperDenied(msg) => write!(f, "denied by Gatekeeper: {}", msg),
             HarnessError::NetworkError(msg) => write!(f, "network/HTTP transport error: {}", msg),
+            HarnessError::DailyBudgetExceeded {
+                project_id,
+                day_key,
+                spent_micros,
+                limit_micros,
+                suggested_alternatives,
+            } => write!(
+                f,
+                "daily token budget reached 100% for project '{}' on {} ({}/{} micro-USD); paid LLM calls blocked. Free/local alternatives: {:?}",
+                project_id, day_key, spent_micros, limit_micros, suggested_alternatives
+            ),
             HarnessError::Cancelled => write!(f, "agent turn cooperatively cancelled"),
         }
     }
@@ -161,6 +179,12 @@ pub enum TurnStepOutcome {
     Completed {
         reply: String,
         total_steps: usize,
+    },
+    LocalZeroTokenReply {
+        category: String,
+        intent_id: String,
+        reply: String,
+        tokens_used: u32,
     },
     ToolExecuted {
         step: usize,
