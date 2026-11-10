@@ -7,12 +7,14 @@ pub mod audit;
 pub mod capture_devices;
 mod controller;
 pub mod ptt_pipeline;
+pub mod stt_backends;
 pub mod stt_engine;
 pub mod types_and_buffer;
 
 pub use self::audit::*;
 pub use self::capture_devices::*;
 pub use self::ptt_pipeline::*;
+pub use self::stt_backends::*;
 pub use self::stt_engine::*;
 pub use self::types_and_buffer::*;
 

@@ -4148,7 +4148,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `WhisperCliLocalBackend` falla cerrado con `LocalRuntimeBinaryUnavailable` si falta `whisper-cli` (nunca inventa transcripciones), que 4 fixtures bilingües ES/EN recorren el pipeline PTT -> STT y entregan las órdenes en FIFO a la sesión activa (`sess_active_agent_41`) y al puente IPC (`voice_enqueue_prompt`), y que cualquier audio desconocido o ruido se rechaza con `NoSpeechRecognized`.',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica primero que `WhisperCliLocalBackend` falla cerrado (`LocalRuntimeBinaryUnavailable`) cuando el binario no existe, y a continuación exige e invoca el ejecutable `whisper-cli` real con `ggml-tiny.bin` verificado por SHA-256 (`77_691_713` B, `be07e048...`) y dos archivos `.wav` RIFF `16 kHz` mono `PCM16` reales en español (`es_fixture.wav`) e inglés (`en_fixture.wav`), recorriendo el pipeline completo PTT -> STT real -> `VoiceSessionOrderQueue` + `WebView2IpcBridge` (`voice_enqueue_prompt`). No acepta `DeterministicCorpusSttBackend` como sustituto del motor Whisper real (si falta el binario, el modelo o los WAV en Windows, informa `REAL_WHISPER_E2E_BLOCKED`).',
     },
     {
       id: 'LEDGER-4.1-4',
@@ -4192,7 +4192,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `redact_sensitive_voice_diagnostic` y `SttModelError` redactan transcripciones entrecomilladas, muestras PCM `[...]`, claves `sk-*` y tokens `Bearer`/`eyJ*`, y audita que todos los archivos `.rs` en `miku-ui/src/voice/` tienen estrictamente `< 600` líneas (`max = 576 < 600`).',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `redact_sensitive_voice_diagnostic` y `SttModelError` (`fmt::Display` con `use std::fmt;`) redactan transcripciones entrecomilladas, muestras PCM `[...]`, claves `sk-*` y tokens `Bearer`/`eyJ*`, y audita que todos los archivos `.rs` en `miku-ui/src/voice/` tienen estrictamente `< 600` líneas (`max = 568 < 600`).',
     },
   ],
 
@@ -4726,15 +4726,15 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
-      version: 'Compuerta D · Paso 4.1 Corregido en PENDIENTE-LOCAL (Alineación con Contratos Reales + Captura WinMM `WAVEHDR` Real + Motor STT GGML Whisper v1 Fail-Closed · `LEDGER-4.1-1..7`)',
+      version: 'Compuerta D · Paso 4.1 Corregido en PENDIENTE-LOCAL (`use std::fmt;` en `stt_engine.rs` + Integración E2E Whisper GGML Real con WAVs ES/EN en `LEDGER-4.1-3`)',
       date: '2026-11-10',
       gate: 'Compuerta D (Fases 0..3 VERIFICADAS [42/58 = 72.4%] · Paso 4.1 PENDIENTE-LOCAL)',
       summary:
-        'Corregidos los 44 errores de compilación en `miku-ui` y resueltas las dos brechas funcionales del Micro-paso 4.1 (`F-16`) en `miku/crates/miku-ui/src/voice/{stt_engine.rs,capture_devices.rs,ptt_pipeline.rs,tests_ptt_stt.rs}` y `docs/design/F-16.md` sin tocar crates previos (`0.1`–`3.13`) ni `miku/Cargo.lock`: (1) adaptación completa a los contratos reales (`MIN_PTT_HOLD_DURATION_MS`, `VoiceBufferZeroReport::zeroed_samples`, `CanonicalPathJail::new(&str)` + `resolve_and_confine`, `VoiceInteractionController::{new_default, start_ptt_session, ingest_pcm_frame, release_ptt_and_begin_processing, complete_utterance, cancel_cooperatively}`, `GatekeeperEngine::evaluate_request`, `UiKillSwitchManager::trip`); (2) captura hardware Win32 real en `WinMmWaveInCaptureProbe` (`waveInOpen` + preparación y encolado de 4 buffers `WAVEHDR` con `waveInPrepareHeader`/`waveInAddBuffer` + `waveInStart` + lectura por `WHDR_DONE` con zero-fill y re-encolado + `waveInStop -> waveInReset -> waveInUnprepareHeader -> zero-fill -> waveInClose`); (3) reemplazo del clasificador sintético Goertzel por validación real de formato `whisper.cpp` GGML v1 (`0x67676d6c`, `GgmlWhisperHparams`), manifiestos oficiales upstream `ggerganov/whisper.cpp` bajo licencia `MIT` (`ggml-tiny.bin`: `77_691_713` B, SHA-256 `be07e048...`; `ggml-base.bin`: `147_951_465` B, SHA-256 `60ed5bc3...`), `WhisperCliLocalBackend` fail-closed (`LocalRuntimeBinaryUnavailable` si falta `whisper-cli`) y `DeterministicCorpusSttBackend` que rechaza cualquier audio no registrado con `NoSpeechRecognized`.',
+        'Corregidos los 3 errores de compilación en `miku/crates/miku-ui/src/voice/stt_engine.rs:141–142` añadiendo `use std::fmt;`, extraído `miku/crates/miku-ui/src/voice/stt_backends.rs` (`311` líneas `< 600`) con `decode_riff_wav_pcm16_mono` y resolución real de `whisper-cli`, y actualizado `LEDGER-4.1-3` (`test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_enqueue_to_active_session` en `tests_ptt_stt.rs`, `465` líneas `< 600`) para invocar obligatoriamente `WhisperCliLocalBackend` real sobre `ggml-tiny.bin` verificado (`77_691_713` B, SHA-256 `be07e048...`) y archivos `.wav` reales a `16 kHz` mono `PCM16` en español e inglés (`es_fixture.wav` y `en_fixture.wav`), sin aceptar `DeterministicCorpusSttBackend` como evidencia del motor Whisper real. Si el ejecutable, el modelo o los WAV reales no están presentes en Windows, la prueba informa el bloqueo exacto (`REAL_WHISPER_E2E_BLOCKED`) y `4.1` permanece en `PENDIENTE-LOCAL`.',
       highlights: [
-        'Eliminados los 44 errores de compilación adaptando `ptt_pipeline.rs`, `capture_devices.rs`, `stt_engine.rs` y `tests_ptt_stt.rs` a los contratos reales de `miku-ui`, `miku-gatekeeper` y `miku-protocol`.',
-        'Todos los módulos de `miku-ui/src/voice/` cumplen estrictamente el límite `< 600` líneas (`stt_engine.rs`: 576, `capture_devices.rs`: 568, `ptt_pipeline.rs`: 541, `tests_ptt_stt.rs`: 504, `controller.rs`: 438, `tests.rs`: 318, `types_and_buffer.rs`: 279, `audit.rs`: 221, `mod.rs`: 22).',
-        'Sin cambios en `Cargo.toml` ni en `miku/Cargo.lock`; el Paso 4.1 y `LEDGER-4.1-1..7` permanecen en `PENDIENTE-LOCAL`.',
+        'Resueltos los 3 únicos errores de compilación restantes en `stt_engine.rs:141–142` (`use std::fmt;`).',
+        '`LEDGER-4.1-3` exige ejecución real de `whisper-cli` con `ggml-tiny.bin` verificado y fixtures `.wav` reales ES/EN (`decode_riff_wav_pcm16_mono`), rechazando sustituir la evidencia del motor real por `DeterministicCorpusSttBackend`.',
+        'Todos los módulos de `miku-ui/src/voice/` cumplen holgadamente `< 600` líneas (`capture_devices.rs`: 568, `ptt_pipeline.rs`: 541, `stt_engine.rs`: 524, `tests_ptt_stt.rs`: 465, `controller.rs`: 438, `tests.rs`: 318, `stt_backends.rs`: 311, `types_and_buffer.rs`: 279, `audit.rs`: 221, `mod.rs`: 25).',
       ],
     },
     {
@@ -5723,21 +5723,28 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'docs/design/F-16.md',
       kind: 'file',
-      description: 'Documento de diseño técnico del Paso 4.1 (`F-16`): contratos reales de `miku-ui`/`miku-gatekeeper`, captura hardware WinMM `WAVEHDR` real, formato GGML Whisper v1 (`0x67676d6c`), manifiestos `ggerganov/whisper.cpp` (`MIT`), TTL a `0 MB` y redacción de diagnósticos',
+      description: 'Documento de diseño técnico del Paso 4.1 (`F-16`): contratos reales de `miku-ui`/`miku-gatekeeper`, captura hardware WinMM `WAVEHDR`, `stt_backends.rs` (`WhisperCliLocalBackend` + `decode_riff_wav_pcm16_mono`), formato GGML Whisper v1 (`0x67676d6c`) e integración E2E real en `LEDGER-4.1-3`',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/mod.rs',
       kind: 'file',
-      description: 'Raíz del dominio `voice` exportando `capture_devices`, `ptt_pipeline`, `stt_engine` y `tests_ptt_stt` (22 líneas < 600)',
-      deliveredInCurrentTurn: false,
+      description: 'Raíz del dominio `voice` exportando `capture_devices`, `ptt_pipeline`, `stt_backends`, `stt_engine` y `tests_ptt_stt` (25 líneas < 600)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/stt_engine.rs',
       kind: 'file',
-      description: 'Motor STT local bajo demanda (`OnDemandLocalSttRuntime`), validación GGML Whisper v1 (`0x67676d6c`, `GgmlWhisperHparams`), manifiestos oficiales `ggerganov/whisper.cpp` (`ggml-tiny.bin` / `ggml-base.bin`, `MIT`), `WhisperCliLocalBackend` fail-closed y `DeterministicCorpusSttBackend` (576 líneas < 600)',
+      description: 'Motor STT local bajo demanda (`OnDemandLocalSttRuntime`), validación GGML Whisper v1 (`0x67676d6c`, `GgmlWhisperHparams`), manifiestos oficiales `ggerganov/whisper.cpp` (`ggml-tiny.bin` / `ggml-base.bin`, `MIT`) y `fmt::Display` con `use std::fmt;` (524 líneas < 600)',
+      deliveredInCurrentTurn: true,
+      status: 'Entregado (Plan/Cockpit)',
+    },
+    {
+      path: 'miku/crates/miku-ui/src/voice/stt_backends.rs',
+      kind: 'file',
+      description: 'Trait `LocalSttDecoderBackend`, `WhisperCliLocalBackend` (`CREATE_NO_WINDOW`, normalización de salida y fail-closed), codificador/decodificador RIFF WAV `16 kHz` mono `PCM16` (`decode_riff_wav_pcm16_mono`) y `DeterministicCorpusSttBackend` (311 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
@@ -5745,20 +5752,20 @@ export const PROJECT_STATE: ProjectStateData = {
       path: 'miku/crates/miku-ui/src/voice/capture_devices.rs',
       kind: 'file',
       description: 'Trait `PttAudioCaptureStream`, captura hardware Win32 `WinMmWaveInCaptureProbe` con anillo `WAVEHDR` (`waveInPrepareHeader`/`waveInAddBuffer`/`waveInStart`/`WHDR_DONE`/`waveInUnprepareHeader`), `DeterministicFixtureCaptureDevice` y `VoiceSessionOrderQueue` (568 líneas < 600)',
-      deliveredInCurrentTurn: true,
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/ptt_pipeline.rs',
       kind: 'file',
       description: 'Orquestador `PttSttOrchestrator`: coordina `VoiceInteractionController`, `GatekeeperEngine`, `CanonicalPathJail`, `OnDemandLocalSttRuntime`, descarga explícita con verificación `SHA-256` y purga por `UiKillSwitchManager::trip` (541 líneas < 600)',
-      deliveredInCurrentTurn: true,
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/tests_ptt_stt.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 4.1 (`LEDGER-4.1-1..7`): ciclo PTT y `WAVEHDR`, cierre en error/cancelación/Kill Switch, backend `WhisperCliLocalBackend` fail-closed + corpus bilingüe ES/EN, 0 red / 0 tokens, verificación SHA-256 con manifiestos reales, TTL a 0 MB y redacción de errores (504 líneas < 600)',
+      description: 'Suite TDD del Paso 4.1 (`LEDGER-4.1-1..7`): ciclo PTT y `WAVEHDR`, cierre en error/cancelación/Kill Switch, integración E2E real con `whisper-cli` + `ggml-tiny.bin` + WAVs reales ES/EN en `LEDGER-4.1-3`, 0 red / 0 tokens, verificación SHA-256, TTL a 0 MB y redacción de errores (465 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },

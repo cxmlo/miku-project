@@ -1,7 +1,6 @@
 #![allow(unused_imports)]
 use crate::prelude::*;
-use std::collections::BTreeMap;
-use std::process::Command;
+use std::fmt;
 
 pub const GGML_FILE_MAGIC_LE: u32 = 0x67676d6c;
 pub const GGML_WHISPER_HEADER_INTS: usize = 12;
@@ -141,7 +140,9 @@ impl SttModelError {
 impl fmt::Display for SttModelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DiagnosticFailure { context, safe_message } => write!(f, "{}: {}", context, safe_message),
+            Self::DiagnosticFailure { context, safe_message } => {
+                write!(f, "{}: {}", context, safe_message)
+            }
             other => write!(f, "{:?}", other),
         }
     }
@@ -181,8 +182,14 @@ impl GgmlWhisperHparams {
 
     pub fn validate(&self) -> Result<(), SttModelError> {
         let valid_dims = [
-            self.n_audio_ctx, self.n_audio_state, self.n_audio_head, self.n_audio_layer,
-            self.n_text_ctx, self.n_text_state, self.n_text_head, self.n_text_layer,
+            self.n_audio_ctx,
+            self.n_audio_state,
+            self.n_audio_head,
+            self.n_audio_layer,
+            self.n_text_ctx,
+            self.n_text_state,
+            self.n_text_head,
+            self.n_text_layer,
         ]
         .iter()
         .all(|&v| v > 0);
@@ -229,9 +236,18 @@ pub fn build_valid_ggml_whisper_fixture_and_manifest(
 ) -> (Vec<u8>, SttModelManifest) {
     let hp = GgmlWhisperHparams::whisper_tiny_defaults();
     let header = [
-        GGML_FILE_MAGIC_LE as i32, hp.n_vocab, hp.n_audio_ctx, hp.n_audio_state,
-        hp.n_audio_head, hp.n_audio_layer, hp.n_text_ctx, hp.n_text_state,
-        hp.n_text_head, hp.n_text_layer, hp.n_mels, hp.ftype,
+        GGML_FILE_MAGIC_LE as i32,
+        hp.n_vocab,
+        hp.n_audio_ctx,
+        hp.n_audio_state,
+        hp.n_audio_head,
+        hp.n_audio_layer,
+        hp.n_text_ctx,
+        hp.n_text_state,
+        hp.n_text_head,
+        hp.n_text_layer,
+        hp.n_mels,
+        hp.ftype,
     ];
     let slab_len = tensor_slab_bytes.max(64);
     let mut payload = Vec::with_capacity(GGML_WHISPER_MIN_HEADER_BYTES + slab_len);
@@ -260,26 +276,45 @@ pub fn verify_and_parse_stt_model_bytes(
     max_allowed_bytes: usize,
 ) -> Result<VerifiedSttModelWeights, SttModelError> {
     if raw.len() > max_allowed_bytes {
-        return Err(SttModelError::SizeExceedsMaxLimit { actual_bytes: raw.len(), max_bytes: max_allowed_bytes });
+        return Err(SttModelError::SizeExceedsMaxLimit {
+            actual_bytes: raw.len(),
+            max_bytes: max_allowed_bytes,
+        });
     }
     if raw.len() != manifest.expected_size_bytes {
-        return Err(SttModelError::IncompleteDownload { expected_bytes: manifest.expected_size_bytes, received_bytes: raw.len() });
+        return Err(SttModelError::IncompleteDownload {
+            expected_bytes: manifest.expected_size_bytes,
+            received_bytes: raw.len(),
+        });
     }
     let actual_sha = sha256_hex(raw);
     if !actual_sha.eq_ignore_ascii_case(&manifest.expected_sha256_hex) {
-        return Err(SttModelError::Sha256Mismatch { expected_hex: manifest.expected_sha256_hex.clone(), actual_hex: actual_sha });
+        return Err(SttModelError::Sha256Mismatch {
+            expected_hex: manifest.expected_sha256_hex.clone(),
+            actual_hex: actual_sha,
+        });
     }
     if raw.len() < GGML_WHISPER_MIN_HEADER_BYTES {
         return Err(SttModelError::InvalidModelMagic);
     }
-    let r32 = |i: usize| i32::from_le_bytes([raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3]]);
+    let r32 = |i: usize| {
+        i32::from_le_bytes([raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3]])
+    };
     if (r32(0) as u32) != GGML_FILE_MAGIC_LE {
         return Err(SttModelError::InvalidModelMagic);
     }
     let hparams = GgmlWhisperHparams {
-        n_vocab: r32(1), n_audio_ctx: r32(2), n_audio_state: r32(3), n_audio_head: r32(4),
-        n_audio_layer: r32(5), n_text_ctx: r32(6), n_text_state: r32(7), n_text_head: r32(8),
-        n_text_layer: r32(9), n_mels: r32(10), ftype: r32(11),
+        n_vocab: r32(1),
+        n_audio_ctx: r32(2),
+        n_audio_state: r32(3),
+        n_audio_head: r32(4),
+        n_audio_layer: r32(5),
+        n_text_ctx: r32(6),
+        n_text_state: r32(7),
+        n_text_head: r32(8),
+        n_text_layer: r32(9),
+        n_mels: r32(10),
+        ftype: r32(11),
     };
     hparams.validate()?;
     Ok(VerifiedSttModelWeights {
@@ -300,162 +335,14 @@ pub struct LocalSttTranscript {
     pub duration_ms: u64,
 }
 
-pub trait LocalSttDecoderBackend: Send {
-    fn decode_pcm16_mono(
-        &mut self,
-        weights: &VerifiedSttModelWeights,
-        model_file_path: &Path,
-        pcm: &[i16],
-        sample_rate_hz: u32,
-    ) -> Result<LocalSttTranscript, SttModelError>;
-}
-
-#[derive(Default)]
-pub struct WhisperCliLocalBackend {
-    pub executable_override: Option<PathBuf>,
-}
-
-impl WhisperCliLocalBackend {
-    pub fn new() -> Self {
-        Self { executable_override: None }
-    }
-
-    pub fn with_executable_path(path: PathBuf) -> Self {
-        Self { executable_override: Some(path) }
-    }
-
-    fn resolve_executable(&self) -> Option<PathBuf> {
-        if let Some(ref custom) = self.executable_override {
-            return custom.is_file().then(|| custom.clone());
-        }
-        std::env::var("MIKU_WHISPER_CLI_PATH")
-            .ok()
-            .map(PathBuf::from)
-            .filter(|p| p.is_file())
-    }
-}
-
-pub fn encode_riff_wav_pcm16_mono(pcm: &[i16], sample_rate_hz: u32) -> Vec<u8> {
-    let data_bytes = (pcm.len() * 2) as u32;
-    let mut wav = Vec::with_capacity(44 + pcm.len() * 2);
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&36u32.saturating_add(data_bytes).to_le_bytes());
-    wav.extend_from_slice(b"WAVEfmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&sample_rate_hz.to_le_bytes());
-    wav.extend_from_slice(&sample_rate_hz.saturating_mul(2).to_le_bytes());
-    wav.extend_from_slice(&2u16.to_le_bytes());
-    wav.extend_from_slice(&16u16.to_le_bytes());
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_bytes.to_le_bytes());
-    for s in pcm {
-        wav.extend_from_slice(&s.to_le_bytes());
-    }
-    wav
-}
-
-struct EphemeralWavGuard(PathBuf, usize);
-impl Drop for EphemeralWavGuard {
-    fn drop(&mut self) {
-        if self.0.is_file() {
-            let _ = fs::write(&self.0, vec![0u8; self.1.min(65_536)]);
-            let _ = fs::remove_file(&self.0);
-        }
-    }
-}
-
-impl LocalSttDecoderBackend for WhisperCliLocalBackend {
-    fn decode_pcm16_mono(
-        &mut self,
-        _weights: &VerifiedSttModelWeights,
-        model_file_path: &Path,
-        pcm: &[i16],
-        sample_rate_hz: u32,
-    ) -> Result<LocalSttTranscript, SttModelError> {
-        let exe = self.resolve_executable().ok_or_else(|| {
-            SttModelError::LocalRuntimeBinaryUnavailable("whisper-cli missing on host".to_string())
-        })?;
-        let wav = encode_riff_wav_pcm16_mono(pcm, sample_rate_hz);
-        let wav_path = model_file_path.with_extension("ephemeral_ptt.wav");
-        fs::write(&wav_path, &wav).map_err(|e| SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string())))?;
-        let _guard = EphemeralWavGuard(wav_path.clone(), wav.len());
-
-        let mut cmd = Command::new(&exe);
-        cmd.args(["-m", &model_file_path.to_string_lossy(), "-f", &wav_path.to_string_lossy(), "-l", "auto", "-nt", "-np"]);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
-        let out = cmd.output().map_err(|e| SttModelError::DecoderProcessFailed(redact_sensitive_voice_diagnostic(&e.to_string())))?;
-        if !out.status.success() {
-            return Err(SttModelError::DecoderProcessFailed(format!("status {}", out.status)));
-        }
-        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if text.is_empty() {
-            return Err(SttModelError::NoSpeechRecognized);
-        }
-        let lower = text.to_ascii_lowercase();
-        let es = ["ejecuta", "estado", "revisa", "abre", "compila", "pruebas", "aprueba", "cancela"];
-        let language = if es.iter().any(|w| lower.contains(w)) { SttLanguage::Es } else { SttLanguage::En };
-        Ok(LocalSttTranscript {
-            text,
-            language,
-            confidence: 0.92,
-            sample_count: pcm.len(),
-            duration_ms: ((pcm.len() as u64) * 1000) / (sample_rate_hz.max(1) as u64),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DeterministicCorpusSttBackend {
-    entries_by_pcm_sha256: BTreeMap<String, (String, SttLanguage)>,
-}
-
-impl DeterministicCorpusSttBackend {
-    pub fn new() -> Self {
-        Self { entries_by_pcm_sha256: BTreeMap::new() }
-    }
-
-    pub fn register_utterance_fixture(&mut self, seed: u32, transcript: &str, language: SttLanguage) -> Vec<i16> {
-        let mut pcm = Vec::with_capacity(6_400);
-        let mut state = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
-        for i in 0..6_400usize {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let carrier = (((i as u32).wrapping_mul(19 + (seed & 7))) % 64) as i16 - 32;
-            pcm.push(((state >> 16) as i16 % 1400) + carrier * 180);
-        }
-        self.entries_by_pcm_sha256.insert(compute_pcm_sha256_hex(&pcm), (transcript.to_string(), language));
-        pcm
-    }
-}
-
-impl LocalSttDecoderBackend for DeterministicCorpusSttBackend {
-    fn decode_pcm16_mono(
-        &mut self,
-        _weights: &VerifiedSttModelWeights,
-        _model_file_path: &Path,
-        pcm: &[i16],
-        sample_rate_hz: u32,
-    ) -> Result<LocalSttTranscript, SttModelError> {
-        let (text, lang) = self.entries_by_pcm_sha256.get(&compute_pcm_sha256_hex(pcm)).ok_or(SttModelError::NoSpeechRecognized)?;
-        Ok(LocalSttTranscript {
-            text: text.clone(),
-            language: *lang,
-            confidence: 0.99,
-            sample_count: pcm.len(),
-            duration_ms: ((pcm.len() as u64) * 1000) / (sample_rate_hz.max(1) as u64),
-        })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SttModelLifecycleState {
     Unloaded,
-    Loaded { loaded_at_ms: u64, last_used_ms: u64, byte_len: usize },
+    Loaded {
+        loaded_at_ms: u64,
+        last_used_ms: u64,
+        byte_len: usize,
+    },
 }
 
 pub struct OnDemandLocalSttRuntime {
@@ -470,10 +357,18 @@ pub struct OnDemandLocalSttRuntime {
 
 impl OnDemandLocalSttRuntime {
     pub fn new(ttl_ms: u64, max_model_bytes: usize) -> Self {
-        Self::with_backend(ttl_ms, max_model_bytes, Box::new(WhisperCliLocalBackend::new()))
+        Self::with_backend(
+            ttl_ms,
+            max_model_bytes,
+            Box::new(WhisperCliLocalBackend::new()),
+        )
     }
 
-    pub fn with_backend(ttl_ms: u64, max_model_bytes: usize, backend: Box<dyn LocalSttDecoderBackend>) -> Self {
+    pub fn with_backend(
+        ttl_ms: u64,
+        max_model_bytes: usize,
+        backend: Box<dyn LocalSttDecoderBackend>,
+    ) -> Self {
         Self {
             state: SttModelLifecycleState::Unloaded,
             ttl_ms: ttl_ms.max(250),
@@ -485,21 +380,48 @@ impl OnDemandLocalSttRuntime {
         }
     }
 
-    pub fn state(&self) -> &SttModelLifecycleState { &self.state }
-    pub fn allocated_weight_bytes(&self) -> usize { self.loaded_weights.as_ref().map(|w| w.weight_slab.len()).unwrap_or(0) }
-    pub const fn network_calls_made(&self) -> u64 { self.network_calls_made }
-    pub const fn provider_tokens_consumed(&self) -> u64 { self.provider_tokens_consumed }
+    pub fn state(&self) -> &SttModelLifecycleState {
+        &self.state
+    }
 
-    pub fn load_verified_bytes(&mut self, raw: &[u8], manifest: &SttModelManifest, now_ms: u64) -> Result<usize, SttModelError> {
+    pub fn allocated_weight_bytes(&self) -> usize {
+        self.loaded_weights
+            .as_ref()
+            .map(|w| w.weight_slab.len())
+            .unwrap_or(0)
+    }
+
+    pub const fn network_calls_made(&self) -> u64 {
+        self.network_calls_made
+    }
+
+    pub const fn provider_tokens_consumed(&self) -> u64 {
+        self.provider_tokens_consumed
+    }
+
+    pub fn load_verified_bytes(
+        &mut self,
+        raw: &[u8],
+        manifest: &SttModelManifest,
+        now_ms: u64,
+    ) -> Result<usize, SttModelError> {
         let verified = verify_and_parse_stt_model_bytes(raw, manifest, self.max_model_bytes)?;
         let byte_len = verified.weight_slab.len();
         self.loaded_weights = Some(verified);
-        self.state = SttModelLifecycleState::Loaded { loaded_at_ms: now_ms, last_used_ms: now_ms, byte_len };
+        self.state = SttModelLifecycleState::Loaded {
+            loaded_at_ms: now_ms,
+            last_used_ms: now_ms,
+            byte_len,
+        };
         Ok(byte_len)
     }
 
     pub fn unload_and_zero(&mut self) -> usize {
-        let released = self.loaded_weights.take().map(|mut w| w.zero_and_release()).unwrap_or(0);
+        let released = self
+            .loaded_weights
+            .take()
+            .map(|mut w| w.zero_and_release())
+            .unwrap_or(0);
         self.state = SttModelLifecycleState::Unloaded;
         released
     }
@@ -521,14 +443,32 @@ impl OnDemandLocalSttRuntime {
         sample_rate_hz: u32,
         now_ms: u64,
     ) -> Result<LocalSttTranscript, SttModelError> {
-        if pcm.is_empty() { return Err(SttModelError::EmptyAudioSample); }
-        let Some(ref weights) = self.loaded_weights else { return Err(SttModelError::RuntimeNotLoaded); };
-        if let SttModelLifecycleState::Loaded { loaded_at_ms, byte_len, .. } = self.state {
-            self.state = SttModelLifecycleState::Loaded { loaded_at_ms, last_used_ms: now_ms, byte_len };
+        if pcm.is_empty() {
+            return Err(SttModelError::EmptyAudioSample);
         }
-        let rms = (pcm.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / (pcm.len() as f64)).sqrt() as f32;
-        if rms < MIN_SPEECH_RMS_AMPLITUDE { return Err(SttModelError::SilenceOrNoSpeechDetected); }
-        self.backend.decode_pcm16_mono(weights, model_file_path, pcm, sample_rate_hz)
+        let Some(ref weights) = self.loaded_weights else {
+            return Err(SttModelError::RuntimeNotLoaded);
+        };
+        if let SttModelLifecycleState::Loaded {
+            loaded_at_ms,
+            byte_len,
+            ..
+        } = self.state
+        {
+            self.state = SttModelLifecycleState::Loaded {
+                loaded_at_ms,
+                last_used_ms: now_ms,
+                byte_len,
+            };
+        }
+        let rms = (pcm.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>()
+            / (pcm.len() as f64))
+            .sqrt() as f32;
+        if rms < MIN_SPEECH_RMS_AMPLITUDE {
+            return Err(SttModelError::SilenceOrNoSpeechDetected);
+        }
+        self.backend
+            .decode_pcm16_mono(weights, model_file_path, pcm, sample_rate_hz)
     }
 }
 
@@ -539,7 +479,10 @@ pub fn redact_sensitive_voice_diagnostic(raw: &str) -> String {
             let quote = marker.chars().last().unwrap();
             let content_start = start + marker.len();
             if let Some(end_rel) = result[content_start..].find(quote) {
-                result.replace_range(start..content_start + end_rel + 1, "transcript=\"[REDACTED]\"");
+                result.replace_range(
+                    start..content_start + end_rel + 1,
+                    "transcript=\"[REDACTED]\"",
+                );
             } else {
                 result.replace_range(start.., "transcript=\"[REDACTED]\"");
                 break;
@@ -566,7 +509,11 @@ pub fn redact_sensitive_voice_diagnostic(raw: &str) -> String {
         if lower == "bearer" {
             tokens.push("Bearer".to_string());
             skip_next = true;
-        } else if lower.starts_with("sk-") || lower.starts_with("token=") || lower.starts_with("api_key=") || lower.starts_with("eyj") {
+        } else if lower.starts_with("sk-")
+            || lower.starts_with("token=")
+            || lower.starts_with("api_key=")
+            || lower.starts_with("eyj")
+        {
             tokens.push("[REDACTED]".to_string());
         } else {
             tokens.push(tok.to_string());
