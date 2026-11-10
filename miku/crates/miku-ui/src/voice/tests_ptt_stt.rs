@@ -211,13 +211,19 @@ fn test_idle_error_cancellation_and_kill_switch_leave_zero_active_capture_and_ze
 // through the PTT -> STT pipeline (never accepting DeterministicCorpusSttBackend as evidence of real Whisper)
 #[test]
 fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_enqueue_to_active_session() {
+    assert_eq!(WHISPER_CPP_RELEASE_VERSION, "v1.9.2");
+    assert_eq!(WHISPER_CPP_RELEASE_LICENSE, "MIT");
+    assert_eq!(WHISPER_CLI_WIN_X64_ZIP_SIZE_BYTES, 8_194_445);
+    assert_eq!(WHISPER_CLI_WIN_X64_ZIP_SHA256, "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a");
+    assert_eq!(WHISPER_CLI_EXE_V192_SHA256, "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d");
+
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_3");
     let avatar_dir = resolve_avatar_assets_dir();
     let mut reloader = AvatarPackHotReloader::new(&avatar_dir).expect("avatar reloader");
     let avatar = reloader.runtime_mut();
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
 
-    // 1. Verify WhisperCliLocalBackend fails closed when binary path does not exist
+    // 1. Verify WhisperCliLocalBackend fails closed when binary path does not exist or SHA-256 mismatches
     let (dummy_model, dummy_manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
     let dummy_path = temp_dir.join(&dummy_manifest.model_id);
     fs::write(&dummy_path, &dummy_model).expect("write dummy model");
@@ -226,20 +232,30 @@ fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_en
     let missing_err = missing_backend.decode_pcm16_mono(&dummy_weights, &dummy_path, &[2_000i16; 3_200], VOICE_SAMPLE_RATE_HZ).unwrap_err();
     assert!(matches!(missing_err, SttModelError::LocalRuntimeBinaryUnavailable(_)));
 
-    // 2. Require REAL whisper-cli executable, REAL verified ggml-tiny.bin (SHA-256 be07e048...),
+    let fake_exe = temp_dir.join("tampered-whisper-cli.exe");
+    fs::write(&fake_exe, b"MZ-unverified-binary").expect("write tampered exe");
+    let mut tampered_backend = WhisperCliLocalBackend::with_executable_path(fake_exe);
+    let tampered_err = tampered_backend.decode_pcm16_mono(&dummy_weights, &dummy_path, &[2_000i16; 3_200], VOICE_SAMPLE_RATE_HZ).unwrap_err();
+    assert!(matches!(tampered_err, SttModelError::Sha256Mismatch { .. }));
+
+    // 2. Require REAL whisper-cli executable (SHA-256 95e3c0b0...), REAL verified ggml-tiny.bin (SHA-256 be07e048...),
     //    and REAL 16 kHz mono PCM16 WAV fixtures in Spanish and English
     let root_hint = stt_real_fixtures_root();
-    let whisper_exe = WhisperCliLocalBackend::new().resolve_executable().unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: whisper-cli executable missing in {} or MIKU_WHISPER_CLI_PATH", root_hint.display())
+    let backend_probe = WhisperCliLocalBackend::new();
+    let whisper_exe = backend_probe.resolve_executable().unwrap_or_else(|| {
+        panic!("REAL_WHISPER_E2E_BLOCKED: whisper-cli.exe (v1.9.2 MIT, SHA-256 {}) missing in {}", WHISPER_CLI_EXE_V192_SHA256, root_hint.display())
     });
+    let verified_exe_sha = backend_probe.verify_executable_integrity(&whisper_exe).expect("verify whisper-cli.exe SHA-256");
+    println!("VERIFIED_WHISPER_CLI_SHA256={verified_exe_sha}");
+
     let real_model_src = resolve_real_artifact_path("MIKU_STT_MODEL_PATH", "ggml-tiny.bin").unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: ggml-tiny.bin (SHA-256 {}) missing in {} or MIKU_STT_MODEL_PATH", WHISPER_GGML_TINY_SHA256, root_hint.display())
+        panic!("REAL_WHISPER_E2E_BLOCKED: ggml-tiny.bin (SHA-256 {}) missing in {}", WHISPER_GGML_TINY_SHA256, root_hint.display())
     });
     let es_wav_path = resolve_real_artifact_path("MIKU_STT_ES_WAV_PATH", "es_fixture.wav").unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: es_fixture.wav missing in {} or MIKU_STT_ES_WAV_PATH", root_hint.display())
+        panic!("REAL_WHISPER_E2E_BLOCKED: es_fixture.wav missing in {}", root_hint.display())
     });
     let en_wav_path = resolve_real_artifact_path("MIKU_STT_EN_WAV_PATH", "en_fixture.wav").unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: en_fixture.wav missing in {} or MIKU_STT_EN_WAV_PATH", root_hint.display())
+        panic!("REAL_WHISPER_E2E_BLOCKED: en_fixture.wav missing in {}", root_hint.display())
     });
 
     let es_pcm = decode_riff_wav_pcm16_mono(&fs::read(&es_wav_path).unwrap()).expect("decode real 16kHz mono ES WAV");
@@ -267,7 +283,7 @@ fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_en
         orch.capture_device_mut().restage_pcm(pcm);
         press_default_ptt(&mut orch, base_ts, &mut gk, avatar).unwrap();
         while orch.capture_device().staged_remaining_samples() > 0 {
-            let _ = orch.pump_ptt_capture_chunk(1_600, base_ts + 100, avatar, Some(&mut bridge)).unwrap();
+            let _ = orch.pump_ptt_capture_chunk(64_000, base_ts + 100, avatar, Some(&mut bridge)).unwrap();
         }
         let outcome = orch.release_ptt_and_transcribe_to_session("sess_active_agent_41", base_ts + 400, &mut gk, avatar, &mut bridge).unwrap();
         assert!(!orch.is_capture_stream_open());

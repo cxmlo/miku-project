@@ -136,7 +136,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             hotkey_pressed,
             now_ms,
         );
-        if verdict != GatekeeperVerdict::Allow {
+        if !matches!(verdict, GatekeeperVerdict::Allow { .. }) {
             return Err(SttModelError::GatekeeperDenied(format!(
                 "microphone capture denied by Gatekeeper: {:?}",
                 verdict
@@ -264,7 +264,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
                 "load_verified_stt_model",
                 now_ms,
             );
-            if fs_verdict != GatekeeperVerdict::Allow {
+            if !matches!(fs_verdict, GatekeeperVerdict::Allow { .. }) {
                 captured_pcm.fill(0);
                 let _ = self.voice.cancel_cooperatively(
                     VoiceCancellationReason::ExplicitApiAbort,
@@ -421,7 +421,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             target_url,
             now_ms,
         );
-        if net_verdict != GatekeeperVerdict::Allow {
+        if !matches!(net_verdict, GatekeeperVerdict::Allow { .. }) {
             return Err(SttModelError::GatekeeperDenied(format!(
                 "Network download denied by Gatekeeper: {:?}",
                 net_verdict
@@ -436,7 +436,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             "write_verified_stt_model",
             now_ms,
         );
-        if fs_verdict != GatekeeperVerdict::Allow {
+        if !matches!(fs_verdict, GatekeeperVerdict::Allow { .. }) {
             return Err(SttModelError::GatekeeperDenied(format!(
                 "FsWrite denied by Gatekeeper: {:?}",
                 fs_verdict

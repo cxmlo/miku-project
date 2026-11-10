@@ -1,0 +1,422 @@
+Windows PowerShell 5.1
+Copyright (C) Microsoft Corporation. Todos los derechos reservados.
+
+PS C:\Users\cxmluwu\Desktop\miku-project> $fixtureDir = Join-Path $PWD "miku\target\stt_real_fixtures"
+PS C:\Users\cxmluwu\Desktop\miku-project> New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 1. Generar WAV reales 16 kHz mono 16-bit PCM en español e inglés con System.Speech de Windows
+PS C:\Users\cxmluwu\Desktop\miku-project> Add-Type -AssemblyName System.Speech
+PS C:\Users\cxmluwu\Desktop\miku-project> $fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEs = New-Object System.Speech.Synthesis.SpeechSynthesizer
+PS C:\Users\cxmluwu\Desktop\miku-project> try { $synthEs.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::NotSet, [System.Speech.Synthesis.VoiceAge]::NotSet, 0, [System.Globalization.CultureInfo]::GetCultureInfo("es-ES")) } catch {}
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEs.SetOutputToWaveFile((Join-Path $fixtureDir "es_fixture.wav"), $fmt)
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEs.Speak("ejecuta pruebas del proyecto")
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEs.Dispose()
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEn = New-Object System.Speech.Synthesis.SpeechSynthesizer
+PS C:\Users\cxmluwu\Desktop\miku-project> try { $synthEn.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::NotSet, [System.Speech.Synthesis.VoiceAge]::NotSet, 0, [System.Globalization.CultureInfo]::GetCultureInfo("en-US")) } catch {}
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEn.SetOutputToWaveFile((Join-Path $fixtureDir "en_fixture.wav"), $fmt)
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEn.Speak("run clippy and fix warnings")
+PS C:\Users\cxmluwu\Desktop\miku-project> $synthEn.Dispose()
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 2. Descargar ggml-tiny.bin oficial (MIT) si no existe y verificar SHA-256 exacto
+PS C:\Users\cxmluwu\Desktop\miku-project> $modelPath = Join-Path $fixtureDir "ggml-tiny.bin"
+PS C:\Users\cxmluwu\Desktop\miku-project> $expectedSha = "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"
+PS C:\Users\cxmluwu\Desktop\miku-project> if (-not (Test-Path $modelPath)) {
+>>   Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" -OutFile $modelPath
+>> }
+PS C:\Users\cxmluwu\Desktop\miku-project> $actualSha = (Get-FileHash -Path $modelPath -Algorithm SHA256).Hash.ToLowerInvariant()
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "GGML_TINY_SHA256=$actualSha (matches=$($actualSha -eq $expectedSha))"
+GGML_TINY_SHA256=48b03e38f42b8f7f7d4a6b7db8f580e54e1bdbf9b637e1c5c02e866db2db5414 (matches=False)
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 1. Prueba focal del Paso 4.1 (LEDGER-4.1-1..7)
+PS C:\Users\cxmluwu\Desktop\miku-project> cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture
+   Compiling miku-ui v0.1.0 (C:\Users\cxmluwu\Desktop\miku-project\miku\crates\miku-ui)
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:139:23
+    |
+139 |         if verdict != GatekeeperVerdict::Allow {
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+139 |         if verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                       +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:267:30
+    |
+267 |             if fs_verdict != GatekeeperVerdict::Allow {
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+267 |             if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                              +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:424:27
+    |
+424 |         if net_verdict != GatekeeperVerdict::Allow {
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+424 |         if net_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                           +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:439:26
+    |
+439 |         if fs_verdict != GatekeeperVerdict::Allow {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+439 |         if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                          +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0533`.
+error: could not compile `miku-ui` (lib test) due to 4 previous errors
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "VOICE_4_1_EXIT_CODE=$LASTEXITCODE"
+VOICE_4_1_EXIT_CODE=101
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 2. Voz existente (Paso 2.8)
+PS C:\Users\cxmluwu\Desktop\miku-project> cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests:: -- --nocapture
+   Compiling miku-ui v0.1.0 (C:\Users\cxmluwu\Desktop\miku-project\miku\crates\miku-ui)
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:139:23
+    |
+139 |         if verdict != GatekeeperVerdict::Allow {
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+139 |         if verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                       +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:267:30
+    |
+267 |             if fs_verdict != GatekeeperVerdict::Allow {
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+267 |             if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                              +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:424:27
+    |
+424 |         if net_verdict != GatekeeperVerdict::Allow {
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+424 |         if net_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                           +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:439:26
+    |
+439 |         if fs_verdict != GatekeeperVerdict::Allow {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+439 |         if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                          +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0533`.
+error: could not compile `miku-ui` (lib test) due to 4 previous errors
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "VOICE_2_8_EXIT_CODE=$LASTEXITCODE"
+VOICE_2_8_EXIT_CODE=101
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 3. Auditoría modular (< 600 líneas por archivo .rs en miku-ui)
+PS C:\Users\cxmluwu\Desktop\miku-project> cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib tests::test_every_miku_ui_source_module_enforces_sub_600_lines_and_clean_boundaries -- --exact --nocapture
+   Compiling miku-ui v0.1.0 (C:\Users\cxmluwu\Desktop\miku-project\miku\crates\miku-ui)
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:139:23
+    |
+139 |         if verdict != GatekeeperVerdict::Allow {
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+139 |         if verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                       +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:267:30
+    |
+267 |             if fs_verdict != GatekeeperVerdict::Allow {
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+267 |             if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                              +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:424:27
+    |
+424 |         if net_verdict != GatekeeperVerdict::Allow {
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+424 |         if net_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                           +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:439:26
+    |
+439 |         if fs_verdict != GatekeeperVerdict::Allow {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+439 |         if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                          +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0533`.
+error: could not compile `miku-ui` (lib test) due to 4 previous errors
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "UI_LINE_AUDIT_EXIT_CODE=$LASTEXITCODE"
+UI_LINE_AUDIT_EXIT_CODE=101
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 4. Clippy estricto en todo el workspace
+PS C:\Users\cxmluwu\Desktop\miku-project> cargo clippy --manifest-path miku/Cargo.toml --workspace --all-targets -- -D warnings
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_protocol-0ac6j40wjtp11\s-hnzvam057z-1h3cpoz-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_protocol-0ugbsacwepdca\s-hnzvam03a0-0au6dg0-working`
+
+warning: `miku-protocol` (lib) generated 1 warning
+warning: `miku-protocol` (lib test) generated 1 warning
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_core-3fu778095w4gb\s-hnzvambku2-1wwa4y0-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_core-154wfk7zd8w3a\s-hnzvambe50-0ajvfp7-working`
+
+warning: `miku-core` (lib) generated 1 warning
+warning: `miku-core` (lib test) generated 1 warning
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gateway-269f8rr26r7ld\s-hnzvamj00v-0ck8wfn-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gateway-00y9p8ijtciec\s-hnzvamj8ry-0wu2cuk-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_core-1wvyf36rxqbjc\s-hnzvamjddz-0oigqpo-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_core-34n8uehjm2u4b\s-hnzvamj5cc-0sz3uuu-working`
+
+warning: `miku-gateway` (lib) generated 1 warning
+warning: `miku-gateway` (lib test) generated 1 warning
+warning: `miku-core` (bin "miku-core" test) generated 1 warning
+warning: `miku-core` (bin "miku-core") generated 1 warning
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gatekeeper-24a3qrdxbkihu\s-hnzvamrh4w-1pqd3rn-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_platform-1b4svqw4ir765\s-hnzvamr93r-1q0y7kq-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gateway-228x0q99ykt1f\s-hnzvamsqbh-1byoaqe-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gateway-2ujoex3vi0w6d\s-hnzvamsq7d-0wxsw6b-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_platform-1ikfba4rzbzgj\s-hnzvamsa9v-16g65av-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gatekeeper-21eocc43b7uh3\s-hnzvamsdhg-1jrvyjb-working`
+
+warning: `miku-gatekeeper` (lib) generated 1 warning
+warning: `miku-platform` (lib) generated 1 warning
+warning: `miku-gateway` (bin "miku-gateway") generated 1 warning
+warning: `miku-gateway` (bin "miku-gateway" test) generated 1 warning
+warning: `miku-platform` (lib test) generated 1 warning
+warning: `miku-gatekeeper` (lib test) generated 1 warning
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_storage-20amuer51svdv\s-hnzvan9wvr-12x2k9n-working`
+
+    Checking miku-ui v0.1.0 (C:\Users\cxmluwu\Desktop\miku-project\miku\crates\miku-ui)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_platform-2bd90u1xr83rh\s-hnzvan2ugc-01eih9v-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gatekeeper-3bycd6sgky1ki\s-hnzvan4b4p-1raqxex-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_gatekeeper-2pma63pfm31ss\s-hnzvan4l3k-094w4tb-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_storage-39p1wt2neov3q\s-hnzvan3dh5-1v4cwsn-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_platform-2wopzhi526nhf\s-hnzvan2vyn-0o6u27l-working`
+
+warning: `miku-storage` (lib) generated 1 warning
+warning: `miku-platform` (bin "miku-platform") generated 1 warning
+warning: `miku-gatekeeper` (bin "miku-gatekeeper") generated 1 warning
+warning: `miku-gatekeeper` (bin "miku-gatekeeper" test) generated 1 warning
+warning: `miku-storage` (lib test) generated 1 warning
+warning: `miku-platform` (bin "miku-platform" test) generated 1 warning
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_memory-0grxufzxa6xag\s-hnzvanltml-1yrkhmt-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_storage-3b452k83y4p30\s-hnzvanlqsc-1f5r3j0-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_memory-0inyzw8f45v60\s-hnzvanmk5m-0qfigpi-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_storage-0tgujnpj8pp5j\s-hnzvanlqvq-1sza71x-working`
+
+warning: `miku-memory` (lib) generated 1 warning
+warning: `miku-storage` (bin "miku-storage") generated 1 warning
+warning: `miku-memory` (lib test) generated 1 warning
+warning: `miku-storage` (bin "miku-storage" test) generated 1 warning
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_agent-32i01aznvnxyi\s-ho0jfmp8pf-0tbvwl5-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_agent-2je87xhaz2s6y\s-ho0jfmpi7j-059h1tj-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_memory-05orp6h0cg3m5\s-hnzvao748p-0n6abpt-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_memory-1fcc52rj9mks1\s-hnzvao7b3u-1klkcgt-working`
+
+warning: `miku-agent` (lib) generated 1 warning
+warning: `miku-agent` (lib test) generated 1 warning
+warning: `miku-memory` (bin "miku-memory" test) generated 1 warning
+warning: `miku-memory` (bin "miku-memory") generated 1 warning
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_mcp-35sl0910varyq\s-ho0jfntz9t-0exwrq7-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_agent-239je2rzjdrx9\s-ho0jfnsezv-041i2c5-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_mcp-1q61pkz199jk6\s-ho0jfnu24x-0kl7x8x-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_agent-0wtl6h3lwfqtr\s-ho0jfnt5yy-0umaieb-working`
+
+warning: `miku-mcp` (lib test) generated 1 warning
+warning: `miku-agent` (bin "miku-agent") generated 1 warning
+warning: `miku-mcp` (lib) generated 1 warning
+warning: `miku-agent` (bin "miku-agent" test) generated 1 warning
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:139:23
+    |
+139 |         if verdict != GatekeeperVerdict::Allow {
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+139 |         if verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                       +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:267:30
+    |
+267 |             if fs_verdict != GatekeeperVerdict::Allow {
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+267 |             if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                              +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:424:27
+    |
+424 |         if net_verdict != GatekeeperVerdict::Allow {
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+424 |         if net_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                           +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:439:26
+    |
+439 |         if fs_verdict != GatekeeperVerdict::Allow {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+439 |         if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                          +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0533`.
+error: could not compile `miku-ui` (lib) due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `miku-ui` (lib test) due to 4 previous errors
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "CLIPPY_EXIT_CODE=$LASTEXITCODE"
+CLIPPY_EXIT_CODE=101
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 5. Workspace serial
+PS C:\Users\cxmluwu\Desktop\miku-project> cmd /c "cargo test --manifest-path miku/Cargo.toml --workspace -- --test-threads=1 < NUL"
+   Compiling miku-ui v0.1.0 (C:\Users\cxmluwu\Desktop\miku-project\miku\crates\miku-ui)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\C:\Users\cxmluwu\Desktop\miku-project\miku\target\debug\incremental\miku_skills-3lrg9uzexvbeu\s-hnzvjfyoqc-1kjzx6g-working`
+
+warning: `miku-skills` (lib) generated 1 warning
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:139:23
+    |
+139 |         if verdict != GatekeeperVerdict::Allow {
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+139 |         if verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                       +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:267:30
+    |
+267 |             if fs_verdict != GatekeeperVerdict::Allow {
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+267 |             if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                              +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:424:27
+    |
+424 |         if net_verdict != GatekeeperVerdict::Allow {
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+424 |         if net_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                           +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0533]: expected value, found struct variant `GatekeeperVerdict::Allow`
+   --> crates\miku-ui\src\voice\ptt_pipeline.rs:439:26
+    |
+439 |         if fs_verdict != GatekeeperVerdict::Allow {
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^ not a value
+    |
+help: you might have meant to create a new value of the struct
+    |
+439 |         if fs_verdict != (GatekeeperVerdict::Allow { canonical_target: /* value */, audit_seq: /* value */, audit_hash: /* value */ } {
+    |                          +                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0533`.
+error: could not compile `miku-ui` (lib) due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `miku-ui` (lib test) due to 4 previous errors
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "WORKSPACE_EXIT_CODE=$LASTEXITCODE"
+WORKSPACE_EXIT_CODE=101
+PS C:\Users\cxmluwu\Desktop\miku-project>
+PS C:\Users\cxmluwu\Desktop\miku-project> # 6. Cockpit y estado git
+PS C:\Users\cxmluwu\Desktop\miku-project> npm run lint
+
+> react-example@0.0.0 lint
+> tsc --noEmit
+
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "NPM_LINT_EXIT_CODE=$LASTEXITCODE"
+NPM_LINT_EXIT_CODE=0
+PS C:\Users\cxmluwu\Desktop\miku-project> npx --yes tsx --test src/utils/cockpitLogic.test.ts
+✔ calculatePhaseProgress strictly counts only VERIFICADO steps and never invents progress (5.9365ms)
+✔ evaluateBudgetCompliance returns PENDIENTE when measuredValue is null and validates thresholds accurately (0.4502ms)
+✔ filterTestLedger filters by status and search term across stepId, name, kind, and command (0.5824ms)
+✔ formatChangeRequest produces governance-compliant CR string (0.5994ms)
+✔ buildGateAReplySummary uses default suggestions when custom answers are empty (1.2469ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 498.8374
+PS C:\Users\cxmluwu\Desktop\miku-project> Write-Host "COCKPIT_TEST_EXIT_CODE=$LASTEXITCODE"
+COCKPIT_TEST_EXIT_CODE=0
+PS C:\Users\cxmluwu\Desktop\miku-project> git status --short
+ M miku/Cargo.lock
+PS C:\Users\cxmluwu\Desktop\miku-project>

@@ -21,6 +21,16 @@ pub const WHISPER_GGML_BASE_SHA256: &str =
     "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
 pub const WHISPER_GGML_BASE_SIZE_BYTES: usize = 147_951_465;
 
+pub const WHISPER_CPP_RELEASE_VERSION: &str = "v1.9.2";
+pub const WHISPER_CPP_RELEASE_LICENSE: &str = "MIT";
+pub const WHISPER_CLI_WIN_X64_ZIP_URL: &str =
+    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip";
+pub const WHISPER_CLI_WIN_X64_ZIP_SIZE_BYTES: usize = 8_194_445;
+pub const WHISPER_CLI_WIN_X64_ZIP_SHA256: &str =
+    "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a";
+pub const WHISPER_CLI_EXE_V192_SHA256: &str =
+    "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SttLanguage {

@@ -16,19 +16,41 @@ pub trait LocalSttDecoderBackend: Send {
 #[derive(Default)]
 pub struct WhisperCliLocalBackend {
     pub executable_override: Option<PathBuf>,
+    pub expected_exe_sha256: Option<String>,
 }
 
 impl WhisperCliLocalBackend {
     pub fn new() -> Self {
+        let expected_sha = std::env::var("MIKU_WHISPER_CLI_SHA256")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| WHISPER_CLI_EXE_V192_SHA256.to_string());
         Self {
             executable_override: None,
+            expected_exe_sha256: Some(expected_sha),
         }
     }
 
     pub fn with_executable_path(path: PathBuf) -> Self {
-        Self {
-            executable_override: Some(path),
+        let mut backend = Self::new();
+        backend.executable_override = Some(path);
+        backend
+    }
+
+    pub fn verify_executable_integrity(&self, exe_path: &Path) -> Result<String, SttModelError> {
+        let raw_exe = fs::read(exe_path).map_err(|e| {
+            SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
+        })?;
+        let actual_sha = sha256_hex(&raw_exe);
+        if let Some(ref expected_sha) = self.expected_exe_sha256 {
+            if !actual_sha.eq_ignore_ascii_case(expected_sha.trim()) {
+                return Err(SttModelError::Sha256Mismatch {
+                    expected_hex: expected_sha.clone(),
+                    actual_hex: actual_sha,
+                });
+            }
         }
+        Ok(actual_sha)
     }
 
     pub fn resolve_executable(&self) -> Option<PathBuf> {
@@ -47,8 +69,8 @@ impl WhisperCliLocalBackend {
             .map(|root| root.join("target").join("stt_real_fixtures"));
         if let Some(ref dir) = manifest_fixture_dir {
             for rel in [
-                "whisper-cli.exe",
                 "Release/whisper-cli.exe",
+                "whisper-cli.exe",
                 "bin/whisper-cli.exe",
                 "whisper-cli",
             ] {
@@ -209,6 +231,7 @@ impl LocalSttDecoderBackend for WhisperCliLocalBackend {
         let exe = self.resolve_executable().ok_or_else(|| {
             SttModelError::LocalRuntimeBinaryUnavailable("whisper-cli missing on host".to_string())
         })?;
+        let _verified_exe_sha = self.verify_executable_integrity(&exe)?;
         let wav = encode_riff_wav_pcm16_mono(pcm, sample_rate_hz);
         let wav_path = model_file_path.with_extension("ephemeral_ptt.wav");
         fs::write(&wav_path, &wav).map_err(|e| {
@@ -217,6 +240,9 @@ impl LocalSttDecoderBackend for WhisperCliLocalBackend {
         let _guard = EphemeralWavGuard(wav_path.clone(), wav.len());
 
         let mut cmd = Command::new(&exe);
+        if let Some(exe_dir) = exe.parent() {
+            cmd.current_dir(exe_dir);
+        }
         cmd.args([
             "-m",
             &model_file_path.to_string_lossy(),
