@@ -4191,8 +4191,8 @@ export const PROJECT_STATE: ProjectStateData = {
       kind: 'unitario',
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
-      command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `redact_sensitive_voice_diagnostic_with_secrets` y `SttEngineError` redactan llaves `gsk_*`/`sk-*`, cabeceras `Bearer`/`Authorization:`, secretos activos por valor, muestras PCM `[...]` y transcripciones `transcript="..."`, y audita que todos los archivos `.rs` en `miku-ui/src/voice/` tienen estrictamente `< 600` líneas (`max = 588 < 600`).',
+      command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt::test_voice_and_groq_stt_errors_redact_api_keys_audio_and_transcripts_with_zero_leaks -- --exact --nocapture',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Corregido el bucle de `redact_sensitive_voice_diagnostic` en `stt_engine.rs` con avance monotónico de cursor (`search_from = abs_start + replacement.len()`) en `transcript="` / `transcript=\'` y `pcm=[` para evitar re-coincidencia infinita sobre `transcript="[REDACTED]"` y `pcm=[REDACTED]`. Verifica terminación finita, idempotencia al re-redactar cadenas ya redactadas o truncadas, ocultación completa de múltiples transcripciones, tokens `Authorization: Bearer ...` / `Bearer ...` / `gsk_*` / `sk-*` y muestras PCM, y audita que todos los archivos `.rs` en `miku-ui/src/voice/` tienen `< 600` líneas (`max = 565 < 600`).',
     },
   ],
 
@@ -4725,6 +4725,18 @@ export const PROJECT_STATE: ProjectStateData = {
   ],
 
   changelog: [
+    {
+      version: 'Compuerta D · Corrección de Terminación en `redact_sensitive_voice_diagnostic` (`stt_engine.rs`) y 6 Tipos FFI PascalCase (`upper_case_acronyms`) en `stt_backends.rs` / `stt_engine.rs` · Paso 4.1 en PENDIENTE-LOCAL',
+      date: '2026-11-10',
+      gate: 'Compuerta D (Fases 0..3 VERIFICADAS [42/58 = 72.4%] · Paso 4.1 PENDIENTE-LOCAL)',
+      summary:
+        'Registrados los resultados reales de Windows 11 de la versión Groq de 4.1 (`voice::tests::`: 4/4 `VOICE_BASE_EXIT_CODE=0`; auditoría modular: 64 archivos, máx. 557 líneas `UI_AUDIT_EXIT_CODE=0`; `npm run lint`: 0; `cockpitLogic.test.ts`: 5/5; `git status --short`: solo `M miku/Cargo.lock`; suite focal `voice::tests_ptt_stt::`: 6 tests aprobaron y el 7.º test de redacción se colgó porque `redact_sensitive_voice_diagnostic` buscaba `transcript="` desde el inicio tras reemplazar por `transcript="[REDACTED]"`; Clippy estricto falló con 6 errores `upper_case_acronyms`: `HINTERNET`, `DWORD`, `BOOL`, `LPCWSTR`, `LPVOID` en `stt_backends.rs` y `CREDENTIALW` en `stt_engine.rs`) y corregidas ambas causas demostradas: (1) en `stt_engine.rs`, los bucles de `transcript="` / `transcript=\'` y `pcm=[` avanzan ahora un cursor monotónico (`search_from = abs_start + replacement.len()`), garantizando terminación en $O(N)$ e idempotencia, además de cubrir secuencias `Authorization: Bearer <token>` y `Bearer <token>`; (2) renombrados los tipos/aliases FFI a PascalCase idiomático conservando el ABI C exacto sin supresiones amplias de Clippy (`CredentialW` en `stt_engine.rs` y `WinHttpHandle`, `WinDword`, `WinBool`, `WideCStrPtr`, `VoidPtr` en `stt_backends.rs`); (3) ampliado `LEDGER-4.1-7` en `tests_ptt_stt.rs` para comprobar terminación finita, idempotencia y ocultación de múltiples transcripciones, tokens Bearer/Groq y muestras PCM.',
+      highlights: [
+        'Causa raíz 1 corregida (`stt_engine.rs`): avance monotónico de cursor (`search_from = abs_start + TRANSCRIPT_REPLACEMENT.len()` y `pcm_search_from = abs_start + PCM_REPLACEMENT.len()`) en `redact_sensitive_voice_diagnostic`, eliminando la re-coincidencia infinita sobre `transcript="[REDACTED]"` y `pcm=[REDACTED]`.',
+        'Causa raíz 2 corregida (`stt_engine.rs` y `stt_backends.rs`): renombrados los 6 identificadores FFI `upper_case_acronyms` a PascalCase idiomático (`CredentialW`, `WinHttpHandle`, `WinDword`, `WinBool`, `WideCStrPtr`, `VoidPtr`) conservando `#[repr(C)]` y el ABI `extern "system"` sin `#[allow(clippy::upper_case_acronyms)]`.',
+        'Todos los 10 archivos `.rs` en `miku-ui/src/voice/` cumplen `< 600` líneas (máx. `565` líneas en `stt_engine.rs`), y el smoke test en vivo contra Groq permanece explícitamente ignorado (`#[ignore]`).',
+      ],
+    },
     {
       version: 'Compuerta D · Corrección Arquitectónica del Paso 4.1 en PENDIENTE-LOCAL (Groq Whisper Speech-to-Text `POST /openai/v1/audio/transcriptions`, Consentimiento Cloud + Gatekeeper `Capability::Network`, API Key por Alias y Servidor HTTP Local de Inspección)',
       date: '2026-11-10',
@@ -5737,35 +5749,35 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-ui/src/voice/stt_engine.rs',
       kind: 'file',
-      description: 'Contrato Groq Whisper STT (`GroqWhisperModel`, `GroqBillingEstimate` con mínimo 10 s, `GroqSttConfig` por alias y consentimiento cloud), `ZeroizingBytes`, `VoiceSecretAliasStore` (`WindowsCredentialAliasStore` vía `CredReadW` + `InMemoryVoiceSecretVault`) y redacción de diagnósticos (468 líneas < 600)',
+      description: 'Contrato Groq Whisper STT (`GroqWhisperModel`, `GroqBillingEstimate` con mínimo 10 s, `GroqSttConfig` por alias y consentimiento cloud), `ZeroizingBytes`, `VoiceSecretAliasStore` (`WindowsCredentialAliasStore` vía `CredReadW` con `CredentialW` PascalCase) y `redact_sensitive_voice_diagnostic` con avance monotónico de cursor (565 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/stt_backends.rs',
       kind: 'file',
-      description: 'Validador `parse_groq_endpoint` (`https://` obligatorio salvo loopback de test), codificador/decodificador RIFF WAV `16 kHz` mono `PCM16`, constructor `multipart/form-data` en `ZeroizingBytes`, parser JSON y `GroqWhisperHttpClient` (`WinHTTP` + loopback HTTP) (488 líneas < 600)',
+      description: 'Validador `parse_groq_endpoint` (`https://` obligatorio salvo loopback de test), codificador/decodificador RIFF WAV `16 kHz` mono `PCM16`, constructor `multipart/form-data` en `ZeroizingBytes`, parser JSON y `GroqWhisperHttpClient` (`WinHTTP` con tipos FFI PascalCase `WinHttpHandle`/`WinDword`/`WinBool`/`WideCStrPtr`/`VoidPtr` + loopback HTTP) (554 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/capture_devices.rs',
       kind: 'file',
-      description: 'Captura de micrófono `WasapiCaptureDevice` (WASAPI real en Windows + loopback determinista en tests), `AgentPromptQueueBridge`, IPC `voice.transcript.ready` y `PttPipelineOutcome` con `GroqSttTranscript` (556 líneas < 600)',
-      deliveredInCurrentTurn: true,
+      description: 'Captura de micrófono `WasapiCaptureDevice` (WASAPI real en Windows + loopback determinista en tests), `AgentPromptQueueBridge`, IPC `voice.transcript.ready` y `PttPipelineOutcome` con `GroqSttTranscript` (557 líneas < 600)',
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/ptt_pipeline.rs',
       kind: 'file',
-      description: 'Orquestador `PttSttOrchestrator`: cierre y zero-fill de micrófono antes de transcribir, verificación de `cloud_audio_consent_granted`, autorización `GatekeeperEngine` (`Capability::Network` y `secret-manager`), carga de API key por alias y purga por `UiKillSwitchManager::trip` (438 líneas < 600)',
-      deliveredInCurrentTurn: true,
+      description: 'Orquestador `PttSttOrchestrator`: cierre y zero-fill de micrófono antes de transcribir, verificación de `cloud_audio_consent_granted`, autorización `GatekeeperEngine` (`Capability::Network` y `secret-manager`), carga de API key por alias y purga por `UiKillSwitchManager::trip` (452 líneas < 600)',
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/tests_ptt_stt.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 4.1 (`LEDGER-4.1-1..7`) con servidor HTTP local de inspección (`127.0.0.1:0`, sin llamadas en vivo a Groq ni cargos), verificación `multipart/form-data` con WAVs ES/EN, consentimiento cloud, Gatekeeper Network, alias de clave, errores tipados, redacción y smoke test opcional `#[ignore]` (475 líneas < 600)',
+      description: 'Suite TDD del Paso 4.1 (`LEDGER-4.1-1..7`) con servidor HTTP local de inspección (`127.0.0.1:0`, sin llamadas en vivo a Groq ni cargos), prueba de terminación e idempotencia del redactor en `LEDGER-4.1-7` y smoke test opcional `#[ignore]` (559 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },

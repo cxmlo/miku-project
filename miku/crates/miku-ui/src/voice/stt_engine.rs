@@ -369,7 +369,7 @@ mod win_cred {
     use std::ffi::c_void;
 
     #[repr(C)]
-    struct CREDENTIALW {
+    struct CredentialW {
         flags: u32,
         cred_type: u32,
         target_name: *mut u16,
@@ -393,7 +393,7 @@ mod win_cred {
             target_name: *const u16,
             cred_type: u32,
             flags: u32,
-            credential: *mut *mut CREDENTIALW,
+            credential: *mut *mut CredentialW,
         ) -> i32;
         fn CredFree(buffer: *mut c_void);
     }
@@ -406,7 +406,7 @@ mod win_cred {
     pub fn read_win32_credential(alias: &str) -> Result<Option<ZeroizingBytes>, SttEngineError> {
         let target = format!("miku/secrets/{}", alias);
         let wide_target: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
-        let mut cred_ptr: *mut CREDENTIALW = std::ptr::null_mut();
+        let mut cred_ptr: *mut CredentialW = std::ptr::null_mut();
         let ok = unsafe {
             CredReadW(
                 wide_target.as_ptr(),
@@ -481,43 +481,74 @@ pub fn redact_sensitive_voice_diagnostic_with_secrets(
 }
 
 pub fn redact_sensitive_voice_diagnostic(raw: &str) -> String {
+    const TRANSCRIPT_REPLACEMENT: &str = "transcript=\"[REDACTED]\"";
+    const PCM_REPLACEMENT: &str = "pcm=[REDACTED]";
+
     let mut result = raw.to_string();
     for marker in ["transcript=\"", "transcript='"] {
-        while let Some(start) = result.find(marker) {
-            let quote = marker.chars().last().unwrap();
-            let content_start = start + marker.len();
+        let quote = marker.chars().last().unwrap();
+        let mut search_from = 0usize;
+        while search_from < result.len() {
+            let Some(rel_start) = result[search_from..].find(marker) else {
+                break;
+            };
+            let abs_start = search_from + rel_start;
+            let content_start = abs_start + marker.len();
             if let Some(end_rel) = result[content_start..].find(quote) {
-                result.replace_range(
-                    start..content_start + end_rel + 1,
-                    "transcript=\"[REDACTED]\"",
-                );
+                let replace_end = content_start + end_rel + 1;
+                result.replace_range(abs_start..replace_end, TRANSCRIPT_REPLACEMENT);
+                search_from = abs_start + TRANSCRIPT_REPLACEMENT.len();
             } else {
-                result.replace_range(start.., "transcript=\"[REDACTED]\"");
+                result.replace_range(abs_start.., TRANSCRIPT_REPLACEMENT);
                 break;
             }
         }
     }
-    while let Some(start) = result.find("pcm=[") {
-        if let Some(end_rel) = result[start..].find(']') {
-            result.replace_range(start..start + end_rel + 1, "pcm=[REDACTED]");
+
+    let mut pcm_search_from = 0usize;
+    while pcm_search_from < result.len() {
+        let Some(rel_start) = result[pcm_search_from..].find("pcm=[") else {
+            break;
+        };
+        let abs_start = pcm_search_from + rel_start;
+        let content_start = abs_start + "pcm=[".len();
+        if let Some(end_rel) = result[content_start..].find(']') {
+            let replace_end = content_start + end_rel + 1;
+            result.replace_range(abs_start..replace_end, PCM_REPLACEMENT);
+            pcm_search_from = abs_start + PCM_REPLACEMENT.len();
         } else {
-            result.replace_range(start.., "pcm=[REDACTED]");
+            result.replace_range(abs_start.., PCM_REPLACEMENT);
             break;
         }
     }
+
     let mut tokens = Vec::new();
-    let mut skip_next = false;
+    let mut redact_next = false;
+    let mut after_auth_header = false;
     for tok in result.split_whitespace() {
-        if skip_next {
-            tokens.push("[REDACTED]".to_string());
-            skip_next = false;
-            continue;
-        }
         let lower = tok.to_ascii_lowercase();
         let clean = lower.trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';');
-        if clean == "bearer" || clean == "authorization:" {
+        if after_auth_header {
+            after_auth_header = false;
+            if clean == "bearer" || clean == "basic" {
+                tokens.push(tok.to_string());
+                redact_next = true;
+                continue;
+            }
+            tokens.push("[REDACTED]".to_string());
+            continue;
+        }
+        if redact_next {
+            tokens.push("[REDACTED]".to_string());
+            redact_next = false;
+            continue;
+        }
+        if clean == "authorization:" {
             tokens.push(tok.to_string());
-            skip_next = true;
+            after_auth_header = true;
+        } else if clean == "bearer" {
+            tokens.push(tok.to_string());
+            redact_next = true;
         } else if clean.starts_with("gsk_")
             || clean.starts_with("sk-")
             || clean.starts_with("token=")

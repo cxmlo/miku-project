@@ -498,19 +498,33 @@ fn test_groq_endpoint_https_enforcement_official_models_and_minimum_10s_billing_
 #[test]
 fn test_voice_and_groq_stt_errors_redact_api_keys_audio_and_transcripts_with_zero_leaks() {
     let secret = b"gsk_live_secret_value_xyz987654321";
-    let raw_diag = r#"failed near transcript="mi clave secreta es 12345" Authorization: Bearer gsk_live_secret_value_xyz987654321 token=sk-secret999999 pcm=[14320, -12090]"#;
+    let raw_diag = r#"failed near transcript="mi clave secreta es 12345" second transcript='open secret file' Authorization: Bearer gsk_live_secret_value_xyz987654321 Bearer custom_tok_777 token=sk-secret999999 pcm=[14320, -12090] second pcm=[999, -888]"#;
     let safe_diag = redact_sensitive_voice_diagnostic_with_secrets(raw_diag, &[secret]);
 
     assert!(!safe_diag.contains("mi clave secreta es 12345"));
+    assert!(!safe_diag.contains("open secret file"));
     assert!(!safe_diag.contains("gsk_live_secret_value_xyz987654321"));
+    assert!(!safe_diag.contains("custom_tok_777"));
     assert!(!safe_diag.contains("sk-secret999999"));
     assert!(!safe_diag.contains("14320"));
-    assert!(safe_diag.contains("[REDACTED]"));
+    assert!(!safe_diag.contains("-12090"));
+    assert!(!safe_diag.contains("999"));
+    assert!(safe_diag.contains("transcript=\"[REDACTED]\""));
+    assert!(safe_diag.contains("pcm=[REDACTED]"));
+
+    // Idempotence and unclosed delimiter termination check: re-redacting already-redacted or truncated strings terminates immediately
+    let re_redacted = redact_sensitive_voice_diagnostic_with_secrets(&safe_diag, &[secret]);
+    assert_eq!(re_redacted, safe_diag);
+    let truncated_diag = r#"unclosed transcript="secreto truncado sin comilla y pcm=[444, 555"#;
+    let safe_truncated = redact_sensitive_voice_diagnostic(truncated_diag);
+    assert!(!safe_truncated.contains("secreto truncado"));
+    assert!(!safe_truncated.contains("444"));
 
     let err = SttEngineError::from_untrusted_diagnostic("groq_stt", raw_diag, &[secret]);
     let rendered = err.to_string();
     assert!(!rendered.contains("gsk_live_secret_value_xyz987654321"));
     assert!(!rendered.contains("mi clave secreta es 12345"));
+    assert!(!rendered.contains("14320"));
 
     let voice_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("voice");
     for entry in fs::read_dir(&voice_dir).expect("read src/voice") {

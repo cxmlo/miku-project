@@ -403,36 +403,36 @@ fn send_https_multipart_post(
     active_secrets: &[&[u8]],
 ) -> Result<(u16, Vec<u8>), SttEngineError> {
     use std::ffi::c_void;
-    type HINTERNET = *mut c_void;
-    type DWORD = u32;
-    type BOOL = i32;
-    type LPCWSTR = *const u16;
-    type LPVOID = *mut c_void;
+    type WinHttpHandle = *mut c_void;
+    type WinDword = u32;
+    type WinBool = i32;
+    type WideCStrPtr = *const u16;
+    type VoidPtr = *mut c_void;
 
-    const WINHTTP_ACCESS_TYPE_NO_PROXY: DWORD = 1;
-    const WINHTTP_FLAG_SECURE: DWORD = 0x00800000;
-    const WINHTTP_QUERY_STATUS_CODE: DWORD = 19;
-    const WINHTTP_QUERY_FLAG_NUMBER: DWORD = 0x20000000;
-    const ERROR_WINHTTP_TIMEOUT: DWORD = 12002;
+    const WINHTTP_ACCESS_TYPE_NO_PROXY: WinDword = 1;
+    const WINHTTP_FLAG_SECURE: WinDword = 0x00800000;
+    const WINHTTP_QUERY_STATUS_CODE: WinDword = 19;
+    const WINHTTP_QUERY_FLAG_NUMBER: WinDword = 0x20000000;
+    const ERROR_WINHTTP_TIMEOUT: WinDword = 12002;
 
     #[link(name = "winhttp")]
     extern "system" {
-        fn WinHttpOpen(a: LPCWSTR, t: DWORD, p: LPCWSTR, b: LPCWSTR, f: DWORD) -> HINTERNET;
-        fn WinHttpSetTimeouts(h: HINTERNET, r: i32, c: i32, s: i32, rcv: i32) -> BOOL;
-        fn WinHttpConnect(h: HINTERNET, s: LPCWSTR, p: u16, r: DWORD) -> HINTERNET;
-        fn WinHttpOpenRequest(h: HINTERNET, v: LPCWSTR, o: LPCWSTR, ver: LPCWSTR, r: LPCWSTR, a: *const LPCWSTR, f: DWORD) -> HINTERNET;
-        fn WinHttpSendRequest(h: HINTERNET, hdr: LPCWSTR, hlen: DWORD, opt: LPVOID, olen: DWORD, tlen: DWORD, ctx: usize) -> BOOL;
-        fn WinHttpReceiveResponse(h: HINTERNET, r: LPVOID) -> BOOL;
-        fn WinHttpQueryHeaders(h: HINTERNET, lvl: DWORD, n: LPCWSTR, buf: LPVOID, blen: *mut DWORD, idx: *mut DWORD) -> BOOL;
-        fn WinHttpQueryDataAvailable(h: HINTERNET, avail: *mut DWORD) -> BOOL;
-        fn WinHttpReadData(h: HINTERNET, buf: LPVOID, to_read: DWORD, read: *mut DWORD) -> BOOL;
-        fn WinHttpCloseHandle(h: HINTERNET) -> BOOL;
+        fn WinHttpOpen(a: WideCStrPtr, t: WinDword, p: WideCStrPtr, b: WideCStrPtr, f: WinDword) -> WinHttpHandle;
+        fn WinHttpSetTimeouts(h: WinHttpHandle, r: i32, c: i32, s: i32, rcv: i32) -> WinBool;
+        fn WinHttpConnect(h: WinHttpHandle, s: WideCStrPtr, p: u16, r: WinDword) -> WinHttpHandle;
+        fn WinHttpOpenRequest(h: WinHttpHandle, v: WideCStrPtr, o: WideCStrPtr, ver: WideCStrPtr, r: WideCStrPtr, a: *const WideCStrPtr, f: WinDword) -> WinHttpHandle;
+        fn WinHttpSendRequest(h: WinHttpHandle, hdr: WideCStrPtr, hlen: WinDword, opt: VoidPtr, olen: WinDword, tlen: WinDword, ctx: usize) -> WinBool;
+        fn WinHttpReceiveResponse(h: WinHttpHandle, r: VoidPtr) -> WinBool;
+        fn WinHttpQueryHeaders(h: WinHttpHandle, lvl: WinDword, n: WideCStrPtr, buf: VoidPtr, blen: *mut WinDword, idx: *mut WinDword) -> WinBool;
+        fn WinHttpQueryDataAvailable(h: WinHttpHandle, avail: *mut WinDword) -> WinBool;
+        fn WinHttpReadData(h: WinHttpHandle, buf: VoidPtr, to_read: WinDword, read: *mut WinDword) -> WinBool;
+        fn WinHttpCloseHandle(h: WinHttpHandle) -> WinBool;
     }
     #[link(name = "kernel32")]
     extern "system" {
-        fn GetLastError() -> DWORD;
+        fn GetLastError() -> WinDword;
     }
-    struct AutoHandle(HINTERNET);
+    struct AutoHandle(WinHttpHandle);
     impl Drop for AutoHandle {
         fn drop(&mut self) {
             if !self.0.is_null() {
@@ -482,10 +482,10 @@ fn send_https_multipart_post(
         WinHttpSendRequest(
             req.0,
             hdr_w.as_ptr(),
-            hdr_w.len().saturating_sub(1) as DWORD,
-            body.as_ptr() as LPVOID,
-            body.len() as DWORD,
-            body.len() as DWORD,
+            hdr_w.len().saturating_sub(1) as WinDword,
+            body.as_ptr() as VoidPtr,
+            body.len() as WinDword,
+            body.len() as WinDword,
             0,
         )
     };
@@ -510,27 +510,27 @@ fn send_https_multipart_post(
         }
         return Err(SttEngineError::NetworkFailure(format!("WinHttpReceiveResponse code {code}")));
     }
-    let mut status_code: DWORD = 0;
-    let mut sz: DWORD = std::mem::size_of::<DWORD>() as DWORD;
+    let mut status_code: WinDword = 0;
+    let mut sz: WinDword = std::mem::size_of::<WinDword>() as WinDword;
     unsafe {
         WinHttpQueryHeaders(
             req.0,
             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             std::ptr::null(),
-            &mut status_code as *mut DWORD as LPVOID,
+            &mut status_code as *mut WinDword as VoidPtr,
             &mut sz,
             std::ptr::null_mut(),
         );
     }
     let mut out = Vec::new();
     loop {
-        let mut avail: DWORD = 0;
+        let mut avail: WinDword = 0;
         if unsafe { WinHttpQueryDataAvailable(req.0, &mut avail) } == 0 || avail == 0 {
             break;
         }
         let mut chunk = vec![0u8; avail as usize];
-        let mut read: DWORD = 0;
-        if unsafe { WinHttpReadData(req.0, chunk.as_mut_ptr() as LPVOID, avail, &mut read) } == 0 {
+        let mut read: WinDword = 0;
+        if unsafe { WinHttpReadData(req.0, chunk.as_mut_ptr() as VoidPtr, avail, &mut read) } == 0 {
             break;
         }
         chunk.truncate(read as usize);
