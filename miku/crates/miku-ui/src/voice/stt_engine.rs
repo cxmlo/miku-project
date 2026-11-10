@@ -1,35 +1,16 @@
 #![allow(unused_imports)]
 use crate::prelude::*;
 use std::fmt;
+use std::sync::atomic::{compiler_fence, Ordering as AtomicOrdering};
 
-pub const GGML_FILE_MAGIC_LE: u32 = 0x67676d6c;
-pub const GGML_WHISPER_HEADER_INTS: usize = 12;
-pub const GGML_WHISPER_MIN_HEADER_BYTES: usize = GGML_WHISPER_HEADER_INTS * 4;
-pub const DEFAULT_STT_MODEL_TTL_MS: u64 = 15_000;
-pub const DEFAULT_MAX_STT_MODEL_BYTES: usize = 256 * 1024 * 1024;
+pub const GROQ_STT_DEFAULT_ENDPOINT: &str =
+    "https://api.groq.com/openai/v1/audio/transcriptions";
+pub const GROQ_API_HOST: &str = "api.groq.com";
+pub const GROQ_DEFAULT_KEY_ALIAS: &str = "groq-stt-key";
+pub const GROQ_MIN_BILLED_SECONDS_PER_REQUEST: u64 = 10;
+pub const DEFAULT_GROQ_STT_TIMEOUT_MS: u64 = 10_000;
+pub const MAX_STT_WAV_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 pub const MIN_SPEECH_RMS_AMPLITUDE: f32 = 120.0;
-
-pub const WHISPER_GGML_TINY_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin";
-pub const WHISPER_GGML_TINY_SHA256: &str =
-    "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
-pub const WHISPER_GGML_TINY_SIZE_BYTES: usize = 77_691_713;
-
-pub const WHISPER_GGML_BASE_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
-pub const WHISPER_GGML_BASE_SHA256: &str =
-    "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
-pub const WHISPER_GGML_BASE_SIZE_BYTES: usize = 147_951_465;
-
-pub const WHISPER_CPP_RELEASE_VERSION: &str = "v1.9.2";
-pub const WHISPER_CPP_RELEASE_LICENSE: &str = "MIT";
-pub const WHISPER_CLI_WIN_X64_ZIP_URL: &str =
-    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip";
-pub const WHISPER_CLI_WIN_X64_ZIP_SIZE_BYTES: usize = 8_194_445;
-pub const WHISPER_CLI_WIN_X64_ZIP_SHA256: &str =
-    "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a";
-pub const WHISPER_CLI_EXE_V192_SHA256: &str =
-    "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,441 +26,458 @@ impl SttLanguage {
             Self::En => "en",
         }
     }
+
+    pub fn from_groq_language_field(raw: &str) -> Option<Self> {
+        let lower = raw.trim().to_ascii_lowercase();
+        if lower == "es" || lower == "spa" || lower.starts_with("spanish") || lower.starts_with("espa") {
+            Some(Self::Es)
+        } else if lower == "en" || lower == "eng" || lower.starts_with("english") || lower.starts_with("ingl") {
+            Some(Self::En)
+        } else {
+            None
+        }
+    }
 }
 
+/// Official Groq Speech-to-Text Whisper models (`POST /openai/v1/audio/transcriptions`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroqWhisperModel {
+    #[serde(rename = "whisper-large-v3-turbo")]
+    WhisperLargeV3Turbo,
+    #[serde(rename = "whisper-large-v3")]
+    WhisperLargeV3,
+}
+
+impl GroqWhisperModel {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::WhisperLargeV3Turbo => "whisper-large-v3-turbo",
+            Self::WhisperLargeV3 => "whisper-large-v3",
+        }
+    }
+
+    pub const fn hourly_rate_usd_micros(&self) -> u64 {
+        match self {
+            Self::WhisperLargeV3Turbo => 40_000, // $0.04 / hour
+            Self::WhisperLargeV3 => 111_000,     // $0.111 / hour
+        }
+    }
+
+    pub fn parse_id(raw: &str) -> Result<Self, SttEngineError> {
+        match raw.trim() {
+            "whisper-large-v3-turbo" => Ok(Self::WhisperLargeV3Turbo),
+            "whisper-large-v3" => Ok(Self::WhisperLargeV3),
+            other => Err(SttEngineError::UnsupportedGroqModel(
+                redact_sensitive_voice_diagnostic(other),
+            )),
+        }
+    }
+}
+
+/// Cloud billing metadata for a Groq Whisper transcription request.
+/// Groq bills by audio duration with a strict 10-second minimum per request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SttModelManifest {
-    pub model_id: String,
-    pub version: String,
-    pub license: String,
-    pub download_url: String,
-    pub expected_sha256_hex: String,
-    pub expected_size_bytes: usize,
-    pub languages: Vec<SttLanguage>,
+pub struct GroqBillingEstimate {
+    pub model: GroqWhisperModel,
+    pub actual_audio_duration_ms: u64,
+    pub billed_duration_seconds: u64,
+    pub minimum_billing_applied: bool,
+    pub estimated_cost_usd_nanos: u64,
 }
 
-impl SttModelManifest {
-    pub fn default_whisper_tiny() -> Self {
+impl GroqBillingEstimate {
+    pub fn compute(model: GroqWhisperModel, actual_audio_duration_ms: u64) -> Self {
+        let ceil_seconds = actual_audio_duration_ms.div_ceil(1_000).max(1);
+        let billed_duration_seconds = ceil_seconds.max(GROQ_MIN_BILLED_SECONDS_PER_REQUEST);
+        let minimum_billing_applied = ceil_seconds < GROQ_MIN_BILLED_SECONDS_PER_REQUEST;
+        // hourly_rate_usd_micros * 1_000 = nanos per hour; divide by 3600 seconds/hour
+        let estimated_cost_usd_nanos =
+            (billed_duration_seconds * model.hourly_rate_usd_micros() * 1_000).div_ceil(3_600);
         Self {
-            model_id: "ggml-tiny.bin".to_string(),
-            version: "1.0.0".to_string(),
-            license: "MIT".to_string(),
-            download_url: WHISPER_GGML_TINY_URL.to_string(),
-            expected_sha256_hex: WHISPER_GGML_TINY_SHA256.to_string(),
-            expected_size_bytes: WHISPER_GGML_TINY_SIZE_BYTES,
-            languages: vec![SttLanguage::Es, SttLanguage::En],
-        }
-    }
-
-    pub fn default_whisper_base() -> Self {
-        Self {
-            model_id: "ggml-base.bin".to_string(),
-            version: "1.0.0".to_string(),
-            license: "MIT".to_string(),
-            download_url: WHISPER_GGML_BASE_URL.to_string(),
-            expected_sha256_hex: WHISPER_GGML_BASE_SHA256.to_string(),
-            expected_size_bytes: WHISPER_GGML_BASE_SIZE_BYTES,
-            languages: vec![SttLanguage::Es, SttLanguage::En],
-        }
-    }
-
-    pub fn to_download_card(&self) -> SttModelDownloadCard {
-        SttModelDownloadCard {
-            model_id: self.model_id.clone(),
-            version: self.version.clone(),
-            license: self.license.clone(),
-            expected_size_bytes: self.expected_size_bytes,
-            expected_sha256_hex: self.expected_sha256_hex.clone(),
-            languages: self.languages.clone(),
-            download_url: self.download_url.clone(),
-            requires_explicit_user_action: true,
+            model,
+            actual_audio_duration_ms,
+            billed_duration_seconds,
+            minimum_billing_applied,
+            estimated_cost_usd_nanos,
         }
     }
 }
 
+/// Configuration for Groq Speech-to-Text (`F-16` / Step 4.1).
+/// Never stores raw API keys: holds only `api_key_alias` resolved via the secure credential store.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SttModelDownloadCard {
-    pub model_id: String,
-    pub version: String,
-    pub license: String,
-    pub expected_size_bytes: usize,
-    pub expected_sha256_hex: String,
-    pub languages: Vec<SttLanguage>,
-    pub download_url: String,
-    pub requires_explicit_user_action: bool,
+pub struct GroqSttConfig {
+    pub endpoint_url: String,
+    pub model: GroqWhisperModel,
+    pub api_key_alias: String,
+    pub language_hint: Option<SttLanguage>,
+    pub response_format: String,
+    pub timeout_ms: u64,
+    pub cloud_audio_consent_granted: bool,
 }
+
+impl Default for GroqSttConfig {
+    fn default() -> Self {
+        Self {
+            endpoint_url: GROQ_STT_DEFAULT_ENDPOINT.to_string(),
+            model: GroqWhisperModel::WhisperLargeV3Turbo,
+            api_key_alias: GROQ_DEFAULT_KEY_ALIAS.to_string(),
+            language_hint: None,
+            response_format: "verbose_json".to_string(),
+            timeout_ms: DEFAULT_GROQ_STT_TIMEOUT_MS,
+            cloud_audio_consent_granted: false,
+        }
+    }
+}
+
+impl GroqSttConfig {
+    pub fn with_consent(mut self, granted: bool) -> Self {
+        self.cloud_audio_consent_granted = granted;
+        self
+    }
+
+    pub fn with_endpoint(mut self, endpoint_url: impl Into<String>) -> Self {
+        self.endpoint_url = endpoint_url.into();
+        self
+    }
+
+    pub fn with_model(mut self, model: GroqWhisperModel) -> Self {
+        self.model = model;
+        self
+    }
+
+    pub fn with_key_alias(mut self, alias: impl Into<String>) -> Self {
+        self.api_key_alias = alias.into();
+        self
+    }
+
+    pub fn with_language_hint(mut self, lang: Option<SttLanguage>) -> Self {
+        self.language_hint = lang;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroqSttTranscript {
+    pub text: String,
+    pub language: SttLanguage,
+    pub model: GroqWhisperModel,
+    pub sample_count: usize,
+    pub duration_ms: u64,
+    pub billing: GroqBillingEstimate,
+}
+
+pub type LocalSttTranscript = GroqSttTranscript;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SttModelAvailability {
-    VerifiedOnDisk { path: PathBuf, size_bytes: usize },
-    Missing { download_card: SttModelDownloadCard },
-    CorruptedOnDisk { download_card: SttModelDownloadCard, reason: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SttModelError {
-    ModelMissingOnDisk(SttModelDownloadCard),
-    UserConfirmationRequired,
+pub enum SttEngineError {
+    CloudAudioConsentRequired,
     GatekeeperDenied(String),
-    PathJailViolation(String),
-    SizeExceedsMaxLimit { actual_bytes: usize, max_bytes: usize },
-    IncompleteDownload { expected_bytes: usize, received_bytes: usize },
-    Sha256Mismatch { expected_hex: String, actual_hex: String },
-    InvalidModelMagic,
-    UnsupportedGgmlHyperparameters(String),
-    IoFailure(String),
-    UiFailure(String),
-    RuntimeNotLoaded,
+    InvalidSecretAlias(String),
+    MissingApiKeyAlias(String),
+    SecretStoreFailure(String),
+    InsecureTransport(String),
+    InvalidEndpoint(String),
+    UnsupportedGroqModel(String),
+    AudioPayloadTooLarge { actual_bytes: usize, max_bytes: usize },
     EmptyAudioSample,
     SilenceOrNoSpeechDetected,
     NoSpeechRecognized,
-    LocalRuntimeBinaryUnavailable(String),
-    DecoderProcessFailed(String),
+    NetworkTimeout(String),
+    NetworkFailure(String),
+    UpstreamHttpError { status_code: u16, safe_body: String },
+    MalformedProviderResponse(String),
+    IoFailure(String),
+    UiFailure(String),
     DiagnosticFailure { context: String, safe_message: String },
 }
 
-impl SttModelError {
-    pub fn from_untrusted_diagnostic(context: &str, raw_diag: &str) -> Self {
+pub type SttModelError = SttEngineError;
+
+impl SttEngineError {
+    pub fn from_untrusted_diagnostic(context: &str, raw_diag: &str, active_secrets: &[&[u8]]) -> Self {
         Self::DiagnosticFailure {
             context: context.to_string(),
-            safe_message: redact_sensitive_voice_diagnostic(raw_diag),
+            safe_message: redact_sensitive_voice_diagnostic_with_secrets(raw_diag, active_secrets),
         }
     }
 }
 
-impl fmt::Display for SttModelError {
+impl fmt::Display for SttEngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DiagnosticFailure { context, safe_message } => {
                 write!(f, "{}: {}", context, safe_message)
+            }
+            Self::UpstreamHttpError { status_code, safe_body } => {
+                write!(f, "Groq STT HTTP {}: {}", status_code, safe_body)
             }
             other => write!(f, "{:?}", other),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GgmlWhisperHparams {
-    pub n_vocab: i32,
-    pub n_audio_ctx: i32,
-    pub n_audio_state: i32,
-    pub n_audio_head: i32,
-    pub n_audio_layer: i32,
-    pub n_text_ctx: i32,
-    pub n_text_state: i32,
-    pub n_text_head: i32,
-    pub n_text_layer: i32,
-    pub n_mels: i32,
-    pub ftype: i32,
-}
+/// RAII volatile-zeroizing byte buffer for API keys and ephemeral audio/multipart payloads.
+pub struct ZeroizingBytes(Vec<u8>);
 
-impl GgmlWhisperHparams {
-    pub fn whisper_tiny_defaults() -> Self {
-        Self {
-            n_vocab: 51_865,
-            n_audio_ctx: 1500,
-            n_audio_state: 384,
-            n_audio_head: 6,
-            n_audio_layer: 4,
-            n_text_ctx: 448,
-            n_text_state: 384,
-            n_text_head: 6,
-            n_text_layer: 4,
-            n_mels: 80,
-            ftype: 1,
-        }
+impl ZeroizingBytes {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
     }
 
-    pub fn validate(&self) -> Result<(), SttModelError> {
-        let valid_dims = [
-            self.n_audio_ctx,
-            self.n_audio_state,
-            self.n_audio_head,
-            self.n_audio_layer,
-            self.n_text_ctx,
-            self.n_text_state,
-            self.n_text_head,
-            self.n_text_layer,
-        ]
-        .iter()
-        .all(|&v| v > 0);
-        if self.n_vocab < 50_000 || !valid_dims || (self.n_mels != 80 && self.n_mels != 128) {
-            return Err(SttModelError::UnsupportedGgmlHyperparameters(format!(
-                "invalid whisper hparams: vocab={} mels={}",
-                self.n_vocab, self.n_mels
-            )));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedSttModelWeights {
-    pub model_id: String,
-    pub version: String,
-    pub hparams: GgmlWhisperHparams,
-    pub sha256_hex: String,
-    pub weight_slab: Vec<u8>,
-}
-
-impl VerifiedSttModelWeights {
-    pub fn zero_and_release(&mut self) -> usize {
-        let released = self.weight_slab.len();
-        self.weight_slab.fill(0);
-        self.weight_slab.clear();
-        self.weight_slab.shrink_to_fit();
-        released
-    }
-}
-
-pub fn compute_pcm_sha256_hex(pcm: &[i16]) -> String {
-    let mut bytes = Vec::with_capacity(pcm.len() * 2);
-    for s in pcm {
-        bytes.extend_from_slice(&s.to_le_bytes());
-    }
-    sha256_hex(&bytes)
-}
-
-pub fn build_valid_ggml_whisper_fixture_and_manifest(
-    model_id: &str,
-    tensor_slab_bytes: usize,
-) -> (Vec<u8>, SttModelManifest) {
-    let hp = GgmlWhisperHparams::whisper_tiny_defaults();
-    let header = [
-        GGML_FILE_MAGIC_LE as i32,
-        hp.n_vocab,
-        hp.n_audio_ctx,
-        hp.n_audio_state,
-        hp.n_audio_head,
-        hp.n_audio_layer,
-        hp.n_text_ctx,
-        hp.n_text_state,
-        hp.n_text_head,
-        hp.n_text_layer,
-        hp.n_mels,
-        hp.ftype,
-    ];
-    let slab_len = tensor_slab_bytes.max(64);
-    let mut payload = Vec::with_capacity(GGML_WHISPER_MIN_HEADER_BYTES + slab_len);
-    for val in header {
-        payload.extend_from_slice(&val.to_le_bytes());
-    }
-    for idx in 0..slab_len {
-        payload.push(((idx * 31 + 17) & 0xFF) as u8);
-    }
-    let sha = sha256_hex(&payload);
-    let manifest = SttModelManifest {
-        model_id: model_id.to_string(),
-        version: "1.0.0".to_string(),
-        license: "MIT".to_string(),
-        download_url: WHISPER_GGML_TINY_URL.to_string(),
-        expected_sha256_hex: sha,
-        expected_size_bytes: payload.len(),
-        languages: vec![SttLanguage::Es, SttLanguage::En],
-    };
-    (payload, manifest)
-}
-
-pub fn verify_and_parse_stt_model_bytes(
-    raw: &[u8],
-    manifest: &SttModelManifest,
-    max_allowed_bytes: usize,
-) -> Result<VerifiedSttModelWeights, SttModelError> {
-    if raw.len() > max_allowed_bytes {
-        return Err(SttModelError::SizeExceedsMaxLimit {
-            actual_bytes: raw.len(),
-            max_bytes: max_allowed_bytes,
-        });
-    }
-    if raw.len() != manifest.expected_size_bytes {
-        return Err(SttModelError::IncompleteDownload {
-            expected_bytes: manifest.expected_size_bytes,
-            received_bytes: raw.len(),
-        });
-    }
-    let actual_sha = sha256_hex(raw);
-    if !actual_sha.eq_ignore_ascii_case(&manifest.expected_sha256_hex) {
-        return Err(SttModelError::Sha256Mismatch {
-            expected_hex: manifest.expected_sha256_hex.clone(),
-            actual_hex: actual_sha,
-        });
-    }
-    if raw.len() < GGML_WHISPER_MIN_HEADER_BYTES {
-        return Err(SttModelError::InvalidModelMagic);
-    }
-    let r32 = |i: usize| {
-        i32::from_le_bytes([raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3]])
-    };
-    if (r32(0) as u32) != GGML_FILE_MAGIC_LE {
-        return Err(SttModelError::InvalidModelMagic);
-    }
-    let hparams = GgmlWhisperHparams {
-        n_vocab: r32(1),
-        n_audio_ctx: r32(2),
-        n_audio_state: r32(3),
-        n_audio_head: r32(4),
-        n_audio_layer: r32(5),
-        n_text_ctx: r32(6),
-        n_text_state: r32(7),
-        n_text_head: r32(8),
-        n_text_layer: r32(9),
-        n_mels: r32(10),
-        ftype: r32(11),
-    };
-    hparams.validate()?;
-    Ok(VerifiedSttModelWeights {
-        model_id: manifest.model_id.clone(),
-        version: manifest.version.clone(),
-        hparams,
-        sha256_hex: actual_sha,
-        weight_slab: raw.to_vec(),
-    })
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LocalSttTranscript {
-    pub text: String,
-    pub language: SttLanguage,
-    pub confidence: f32,
-    pub sample_count: usize,
-    pub duration_ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SttModelLifecycleState {
-    Unloaded,
-    Loaded {
-        loaded_at_ms: u64,
-        last_used_ms: u64,
-        byte_len: usize,
-    },
-}
-
-pub struct OnDemandLocalSttRuntime {
-    state: SttModelLifecycleState,
-    ttl_ms: u64,
-    max_model_bytes: usize,
-    loaded_weights: Option<VerifiedSttModelWeights>,
-    backend: Box<dyn LocalSttDecoderBackend>,
-    network_calls_made: u64,
-    provider_tokens_consumed: u64,
-}
-
-impl OnDemandLocalSttRuntime {
-    pub fn new(ttl_ms: u64, max_model_bytes: usize) -> Self {
-        Self::with_backend(
-            ttl_ms,
-            max_model_bytes,
-            Box::new(WhisperCliLocalBackend::new()),
-        )
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
     }
 
-    pub fn with_backend(
-        ttl_ms: u64,
-        max_model_bytes: usize,
-        backend: Box<dyn LocalSttDecoderBackend>,
-    ) -> Self {
-        Self {
-            state: SttModelLifecycleState::Unloaded,
-            ttl_ms: ttl_ms.max(250),
-            max_model_bytes,
-            loaded_weights: None,
-            backend,
-            network_calls_made: 0,
-            provider_tokens_consumed: 0,
-        }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
-    pub fn state(&self) -> &SttModelLifecycleState {
-        &self.state
-    }
-
-    pub fn allocated_weight_bytes(&self) -> usize {
-        self.loaded_weights
-            .as_ref()
-            .map(|w| w.weight_slab.len())
-            .unwrap_or(0)
-    }
-
-    pub const fn network_calls_made(&self) -> u64 {
-        self.network_calls_made
-    }
-
-    pub const fn provider_tokens_consumed(&self) -> u64 {
-        self.provider_tokens_consumed
-    }
-
-    pub fn load_verified_bytes(
-        &mut self,
-        raw: &[u8],
-        manifest: &SttModelManifest,
-        now_ms: u64,
-    ) -> Result<usize, SttModelError> {
-        let verified = verify_and_parse_stt_model_bytes(raw, manifest, self.max_model_bytes)?;
-        let byte_len = verified.weight_slab.len();
-        self.loaded_weights = Some(verified);
-        self.state = SttModelLifecycleState::Loaded {
-            loaded_at_ms: now_ms,
-            last_used_ms: now_ms,
-            byte_len,
-        };
-        Ok(byte_len)
-    }
-
-    pub fn unload_and_zero(&mut self) -> usize {
-        let released = self
-            .loaded_weights
-            .take()
-            .map(|mut w| w.zero_and_release())
-            .unwrap_or(0);
-        self.state = SttModelLifecycleState::Unloaded;
-        released
-    }
-
-    pub fn poll_ttl(&mut self, now_ms: u64) -> bool {
-        if let SttModelLifecycleState::Loaded { last_used_ms, .. } = self.state {
-            if now_ms.saturating_sub(last_used_ms) >= self.ttl_ms {
-                self.unload_and_zero();
-                return true;
+    pub fn zeroize_now(&mut self) {
+        for b in self.0.iter_mut() {
+            unsafe {
+                std::ptr::write_volatile(b, 0);
             }
         }
-        false
+        compiler_fence(AtomicOrdering::SeqCst);
+        self.0.clear();
+        self.0.shrink_to_fit();
+    }
+}
+
+impl Drop for ZeroizingBytes {
+    fn drop(&mut self) {
+        self.zeroize_now();
+    }
+}
+
+impl fmt::Debug for ZeroizingBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[REDACTED_SECRET]")
+    }
+}
+
+/// Validates that a credential alias conforms to `SecretManager` naming rules:
+/// non-empty, ASCII alphanumeric with `-` or `_`, and zero path traversal characters.
+pub fn validate_voice_secret_alias(alias: &str) -> Result<(), SttEngineError> {
+    let trimmed = alias.trim();
+    if trimmed.is_empty() {
+        return Err(SttEngineError::InvalidSecretAlias(
+            "alias cannot be empty".to_string(),
+        ));
+    }
+    if trimmed.contains("..") || trimmed.contains('/') || trimmed.contains('\\') {
+        return Err(SttEngineError::InvalidSecretAlias(
+            "alias cannot contain path traversal characters".to_string(),
+        ));
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(SttEngineError::InvalidSecretAlias(format!(
+            "alias '{}' must be alphanumeric, '-' or '_'",
+            trimmed
+        )));
+    }
+    Ok(())
+}
+
+/// Secure credential resolver interface retrieving API keys strictly by alias.
+pub trait VoiceSecretAliasStore: Send {
+    fn load_secret_by_alias(&self, alias: &str) -> Result<Option<ZeroizingBytes>, SttEngineError>;
+}
+
+/// In-memory encrypted/zeroizing credential vault for isolated unit and integration tests.
+#[derive(Default)]
+pub struct InMemoryVoiceSecretVault {
+    entries: BTreeMap<String, Vec<u8>>,
+    read_attempts: AtomicU64,
+}
+
+impl InMemoryVoiceSecretVault {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn transcribe_pcm16_mono(
-        &mut self,
-        model_file_path: &Path,
-        pcm: &[i16],
-        sample_rate_hz: u32,
-        now_ms: u64,
-    ) -> Result<LocalSttTranscript, SttModelError> {
-        if pcm.is_empty() {
-            return Err(SttModelError::EmptyAudioSample);
-        }
-        let Some(ref weights) = self.loaded_weights else {
-            return Err(SttModelError::RuntimeNotLoaded);
-        };
-        if let SttModelLifecycleState::Loaded {
-            loaded_at_ms,
-            byte_len,
-            ..
-        } = self.state
-        {
-            self.state = SttModelLifecycleState::Loaded {
-                loaded_at_ms,
-                last_used_ms: now_ms,
-                byte_len,
-            };
-        }
-        let rms = (pcm.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>()
-            / (pcm.len() as f64))
-            .sqrt() as f32;
-        if rms < MIN_SPEECH_RMS_AMPLITUDE {
-            return Err(SttModelError::SilenceOrNoSpeechDetected);
-        }
-        self.backend
-            .decode_pcm16_mono(weights, model_file_path, pcm, sample_rate_hz)
+    pub fn with_alias_secret(alias: &str, secret: &[u8]) -> Result<Self, SttEngineError> {
+        let mut vault = Self::new();
+        vault.set_alias_secret(alias, secret)?;
+        Ok(vault)
     }
+
+    pub fn set_alias_secret(&mut self, alias: &str, secret: &[u8]) -> Result<(), SttEngineError> {
+        validate_voice_secret_alias(alias)?;
+        if secret.is_empty() {
+            return Err(SttEngineError::MissingApiKeyAlias(alias.to_string()));
+        }
+        self.entries.insert(alias.to_string(), secret.to_vec());
+        Ok(())
+    }
+
+    pub fn remove_alias(&mut self, alias: &str) {
+        if let Some(mut old) = self.entries.remove(alias) {
+            for b in old.iter_mut() {
+                unsafe { std::ptr::write_volatile(b, 0) };
+            }
+            compiler_fence(AtomicOrdering::SeqCst);
+        }
+    }
+
+    pub fn read_attempts(&self) -> u64 {
+        self.read_attempts.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for InMemoryVoiceSecretVault {
+    fn drop(&mut self) {
+        for val in self.entries.values_mut() {
+            for b in val.iter_mut() {
+                unsafe { std::ptr::write_volatile(b, 0) };
+            }
+        }
+        compiler_fence(AtomicOrdering::SeqCst);
+        self.entries.clear();
+    }
+}
+
+impl VoiceSecretAliasStore for InMemoryVoiceSecretVault {
+    fn load_secret_by_alias(&self, alias: &str) -> Result<Option<ZeroizingBytes>, SttEngineError> {
+        self.read_attempts.fetch_add(1, Ordering::SeqCst);
+        validate_voice_secret_alias(alias)?;
+        Ok(self
+            .entries
+            .get(alias)
+            .map(|v| ZeroizingBytes::new(v.clone())))
+    }
+}
+
+/// Production Windows Credential Manager (`Advapi32.dll` `CredReadW`) alias store reading
+/// `miku/secrets/{alias}` (matching `miku_agent::secrets::WindowsCredentialBackend`).
+#[derive(Debug, Default)]
+pub struct WindowsCredentialAliasStore;
+
+impl WindowsCredentialAliasStore {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod win_cred {
+    use super::*;
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct CREDENTIALW {
+        flags: u32,
+        cred_type: u32,
+        target_name: *mut u16,
+        comment: *mut u16,
+        last_written: [u32; 2],
+        credential_blob_size: u32,
+        credential_blob: *mut u8,
+        persist: u32,
+        attribute_count: u32,
+        attributes: *mut c_void,
+        target_alias: *mut u16,
+        user_name: *mut u16,
+    }
+
+    const CRED_TYPE_GENERIC: u32 = 1;
+    const ERROR_NOT_FOUND: u32 = 1168;
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn CredReadW(
+            target_name: *const u16,
+            cred_type: u32,
+            flags: u32,
+            credential: *mut *mut CREDENTIALW,
+        ) -> i32;
+        fn CredFree(buffer: *mut c_void);
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLastError() -> u32;
+    }
+
+    pub fn read_win32_credential(alias: &str) -> Result<Option<ZeroizingBytes>, SttEngineError> {
+        let target = format!("miku/secrets/{}", alias);
+        let wide_target: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut cred_ptr: *mut CREDENTIALW = std::ptr::null_mut();
+        let ok = unsafe {
+            CredReadW(
+                wide_target.as_ptr(),
+                CRED_TYPE_GENERIC,
+                0,
+                &mut cred_ptr,
+            )
+        };
+        if ok == 0 {
+            let err = unsafe { GetLastError() };
+            if err == ERROR_NOT_FOUND {
+                return Ok(None);
+            }
+            return Err(SttEngineError::SecretStoreFailure(format!(
+                "CredReadW failed with code {}",
+                err
+            )));
+        }
+        if cred_ptr.is_null() {
+            return Ok(None);
+        }
+        let bytes = unsafe {
+            let cred = &*cred_ptr;
+            let sz = cred.credential_blob_size as usize;
+            let slice = std::slice::from_raw_parts(cred.credential_blob, sz);
+            slice.to_vec()
+        };
+        unsafe {
+            CredFree(cred_ptr as *mut c_void);
+        }
+        if bytes.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(ZeroizingBytes::new(bytes)))
+        }
+    }
+}
+
+impl VoiceSecretAliasStore for WindowsCredentialAliasStore {
+    fn load_secret_by_alias(&self, alias: &str) -> Result<Option<ZeroizingBytes>, SttEngineError> {
+        validate_voice_secret_alias(alias)?;
+        #[cfg(target_os = "windows")]
+        {
+            win_cred::read_win32_credential(alias)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = alias;
+            Ok(None)
+        }
+    }
+}
+
+/// Redacts transcripts, PCM arrays, API keys (`gsk_*`, `sk-*`), `Bearer` tokens, and any active
+/// secret byte slices so no sensitive data ever leaks into errors, logs, IPC, or diagnostics.
+pub fn redact_sensitive_voice_diagnostic_with_secrets(
+    raw: &str,
+    active_secrets: &[&[u8]],
+) -> String {
+    let mut sanitized = raw.to_string();
+    for sec in active_secrets {
+        if !sec.is_empty() {
+            if let Ok(s) = std::str::from_utf8(sec) {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() && sanitized.contains(trimmed) {
+                    sanitized = sanitized.replace(trimmed, "[REDACTED]");
+                }
+            }
+        }
+    }
+    redact_sensitive_voice_diagnostic(&sanitized)
 }
 
 pub fn redact_sensitive_voice_diagnostic(raw: &str) -> String {
@@ -516,13 +514,16 @@ pub fn redact_sensitive_voice_diagnostic(raw: &str) -> String {
             continue;
         }
         let lower = tok.to_ascii_lowercase();
-        if lower == "bearer" {
-            tokens.push("Bearer".to_string());
+        let clean = lower.trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';');
+        if clean == "bearer" || clean == "authorization:" {
+            tokens.push(tok.to_string());
             skip_next = true;
-        } else if lower.starts_with("sk-")
-            || lower.starts_with("token=")
-            || lower.starts_with("api_key=")
-            || lower.starts_with("eyj")
+        } else if clean.starts_with("gsk_")
+            || clean.starts_with("sk-")
+            || clean.starts_with("token=")
+            || clean.starts_with("api_key=")
+            || clean.starts_with("apikey=")
+            || clean.starts_with("eyj")
         {
             tokens.push("[REDACTED]".to_string());
         } else {

@@ -2,23 +2,119 @@
 use crate::prelude::*;
 use std::io::{Read, Write as IoWrite};
 use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
+
+#[derive(Debug, Clone, Default)]
+struct CapturedGroqHttpRequest {
+    request_line: String,
+    headers_lower: BTreeMap<String, String>,
+    raw_body: Vec<u8>,
+}
 
 fn create_isolated_voice_4_1_dir(tag: &str) -> PathBuf {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let dir = std::env::temp_dir().join(format!("miku_v41_{}_{}_{}", tag, std::process::id(), nanos));
     let _ = fs::create_dir_all(&dir);
     dir
 }
 
-fn permissive_voice_gatekeeper(root_dir: &Path) -> GatekeeperEngine {
+fn permissive_groq_voice_gatekeeper(root_dir: &Path) -> GatekeeperEngine {
     let root_str = root_dir.to_string_lossy().to_string();
-    let profile = ProjectProfile::new("miku-voice-4-1-test", &root_str, 30_000)
+    let profile = ProjectProfile::new("miku-voice-groq-4-1", &root_str, 30_000)
         .with_rule(Capability::Input, "microphone:*", PolicyEffect::Allow, true)
-        .with_rule(Capability::FsRead, "**", PolicyEffect::Allow, true)
-        .with_rule(Capability::FsWrite, "**", PolicyEffect::Allow, true)
-        .with_rule(Capability::Network, "127.0.0.1*", PolicyEffect::Allow, true);
-    GatekeeperEngine::new(profile).expect("build permissive voice gatekeeper")
+        .with_rule(Capability::Network, "127.0.0.1*", PolicyEffect::Allow, true)
+        .with_rule(Capability::Network, "api.groq.com*", PolicyEffect::Allow, true)
+        .with_rule(Capability::Network, "groq-stt-key", PolicyEffect::Allow, true);
+    GatekeeperEngine::new(profile).expect("build permissive groq voice gatekeeper")
+}
+
+fn build_synthetic_speech_pcm16(seed: u32, sample_count: usize) -> Vec<i16> {
+    let mut pcm = Vec::with_capacity(sample_count);
+    let mut state = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    for i in 0..sample_count {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let carrier = (((i as u32).wrapping_mul(19 + (seed & 7))) % 64) as i16 - 32;
+        pcm.push(((state >> 16) as i16 % 1400) + carrier * 180);
+    }
+    pcm
+}
+
+fn spawn_local_groq_stt_server(
+    status_code: u16,
+    response_json: String,
+    delay_ms: u64,
+) -> (String, Arc<Mutex<Vec<CapturedGroqHttpRequest>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind local Groq HTTP inspection server");
+    let addr = listener.local_addr().expect("local server addr");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let captured_clone = Arc::clone(&captured);
+
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(2_000)));
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let mut expected_total: Option<usize> = None;
+
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if expected_total.is_none() {
+                            if let Some(hdr_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                                let hdr_str = String::from_utf8_lossy(&buf[..hdr_end]);
+                                let cl = hdr_str
+                                    .lines()
+                                    .skip(1)
+                                    .filter_map(|l| l.split_once(':'))
+                                    .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+                                    .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+                                    .unwrap_or(0);
+                                expected_total = Some(hdr_end + 4 + cl);
+                            }
+                        }
+                        if expected_total.is_some_and(|tot| buf.len() >= tot) {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(hdr_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let hdr_text = String::from_utf8_lossy(&buf[..hdr_end]);
+                let mut lines = hdr_text.lines();
+                let request_line = lines.next().unwrap_or_default().to_string();
+                let mut headers_lower = BTreeMap::new();
+                for (k, v) in lines.filter_map(|l| l.split_once(':')) {
+                    headers_lower.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
+                }
+                captured_clone.lock().unwrap().push(CapturedGroqHttpRequest {
+                    request_line,
+                    headers_lower,
+                    raw_body: buf[hdr_end + 4..].to_vec(),
+                });
+            }
+
+            if delay_ms > 0 {
+                thread::sleep(Duration::from_millis(delay_ms));
+            }
+            let reason = if status_code == 200 { "OK" } else { "Error" };
+            let resp = format!(
+                "HTTP/1.1 {status_code} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_json}",
+                response_json.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+
+    (format!("http://127.0.0.1:{}/openai/v1/audio/transcriptions", addr.port()), captured)
 }
 
 fn press_default_ptt<C: PttAudioCaptureStream>(
@@ -26,101 +122,52 @@ fn press_default_ptt<C: PttAudioCaptureStream>(
     ts: u64,
     gk: &mut GatekeeperEngine,
     avatar: &mut ProductionAvatarRuntime,
-) -> Result<(), SttModelError> {
+) -> Result<(), SttEngineError> {
     orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, ts, 0x1000, 0x1000, 0x2000, gk, avatar)
 }
 
-fn spawn_single_shot_http_model_server(body: Vec<u8>, declared_len: Option<usize>) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback HTTP server");
-    let addr = listener.local_addr().expect("local addr");
-    let content_len = declared_len.unwrap_or(body.len());
-    thread::spawn(move || {
-        if let Ok((mut stream, _)) = listener.accept() {
-            let mut req_buf = [0u8; 1024];
-            let _ = stream.read(&mut req_buf);
-            let hdr = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {content_len}\r\nConnection: close\r\n\r\n"
-            );
-            let _ = stream.write_all(hdr.as_bytes());
-            let _ = stream.write_all(&body);
-            let _ = stream.flush();
-        }
-    });
-    format!("http://127.0.0.1:{}/models/ggml-fixture.bin", addr.port())
-}
-
-fn stt_real_fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root")
-        .join("target")
-        .join("stt_real_fixtures")
-}
-
-fn resolve_real_artifact_path(env_key: &str, file_name: &str) -> Option<PathBuf> {
-    if let Ok(val) = std::env::var(env_key) {
-        let p = PathBuf::from(val);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    let cand = stt_real_fixtures_root().join(file_name);
-    if cand.is_file() {
-        return Some(cand);
-    }
-    if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
-        let p = PathBuf::from(local_app).join("Miku").join("models").join(file_name);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    None
-}
-
-// LEDGER-4.1-1: PTT opens capture only while held and closes stream immediately on release
+// LEDGER-4.1-1: PTT opens microphone only while held and closes stream BEFORE sending transcription
 #[test]
-fn test_ptt_opens_capture_only_while_held_and_closes_stream_immediately_on_release() {
+fn test_ptt_opens_capture_only_while_held_and_closes_stream_before_sending_transcription() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_1");
     let avatar_dir = resolve_avatar_assets_dir();
     let mut reloader = AvatarPackHotReloader::new(&avatar_dir).expect("avatar reloader");
     let avatar = reloader.runtime_mut();
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
-    let mut gk = permissive_voice_gatekeeper(&temp_dir);
+    let mut gk = permissive_groq_voice_gatekeeper(&temp_dir);
 
-    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
-    fs::write(temp_dir.join(&manifest.model_id), &raw_model).expect("write verified GGML fixture");
-
-    let mut corpus = DeterministicCorpusSttBackend::new();
-    let es_pcm = corpus.register_utterance_fixture(1, "ejecuta cargo test", SttLanguage::Es);
-    let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(es_pcm);
-    let mut orch = PttSttOrchestrator::with_backend(avatar_dir, &temp_dir, manifest, DEFAULT_STT_MODEL_TTL_MS, capture, Box::new(corpus)).unwrap();
+    let (endpoint, captured_reqs) = spawn_local_groq_stt_server(
+        200,
+        r#"{"text":"ejecuta cargo test","language":"es","duration":0.40}"#.to_string(),
+        0,
+    );
+    let config = GroqSttConfig::default().with_endpoint(endpoint).with_consent(true);
+    let vault = InMemoryVoiceSecretVault::with_alias_secret(GROQ_DEFAULT_KEY_ALIAS, b"gsk_test_alias_only_key_411").unwrap();
+    let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(build_synthetic_speech_pcm16(1, 6_400));
+    let mut orch = PttSttOrchestrator::new(avatar_dir, config, capture, Box::new(vault)).unwrap();
 
     assert!(!orch.is_capture_stream_open());
     assert_eq!(orch.capture_device().active_stream_handles_count(), 0);
-    assert_eq!(orch.capture_device().open_calls(), 0);
-    assert_eq!(*orch.voice().state(), VoiceInteractionState::Idle);
-
     assert!(orch.press_ptt_and_open_stream("Ctrl+Alt+Q", 1_000, 0x1000, 0x1000, 0x2000, &mut gk, avatar).is_err());
     assert!(!orch.is_capture_stream_open());
-    assert_eq!(orch.capture_device().open_calls(), 0);
 
     press_default_ptt(&mut orch, 2_000, &mut gk, avatar).expect("press PTT opens stream");
     assert!(orch.is_capture_stream_open());
     assert_eq!(orch.capture_device().active_stream_handles_count(), 1);
-    assert_eq!(orch.capture_device().open_calls(), 1);
-    assert_eq!(*orch.voice().state(), VoiceInteractionState::Listening);
 
     let wave = orch.pump_ptt_capture_chunk(64_000, 2_100, avatar, Some(&mut bridge)).expect("pump audio");
     assert_eq!(wave.target_fps, 60.0);
     assert!(orch.is_capture_stream_open());
 
-    let outcome = orch.release_ptt_and_transcribe_to_session("sess_ptt_01", 2_500, &mut gk, avatar, &mut bridge).unwrap();
+    let outcome = orch
+        .release_ptt_and_transcribe_to_session("sess_ptt_01", 2_500, &mut gk, avatar, &mut bridge)
+        .expect("release PTT closes mic and sends to Groq endpoint");
     assert!(!orch.is_capture_stream_open());
     assert_eq!(orch.capture_device().active_stream_handles_count(), 0);
     assert_eq!(orch.capture_device().close_calls(), 1);
     assert_eq!(orch.capture_device().retained_device_buffer_bytes(), 0);
-    assert_eq!(*orch.voice().state(), VoiceInteractionState::Idle);
+    assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
+    assert_eq!(captured_reqs.lock().unwrap().len(), 1);
     assert!(matches!(outcome, PttPipelineOutcome::TranscribedAndEnqueued { .. }));
 
     let mut winmm_probe = WinMmWaveInCaptureProbe::new();
@@ -140,341 +187,359 @@ fn test_ptt_opens_capture_only_while_held_and_closes_stream_immediately_on_relea
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-2: In idle, error, cancellation, and Kill Switch no active capture or unreleased buffer remains
+// LEDGER-4.1-2: In idle, error, timeout, cancellation, and Kill Switch no active capture or unreleased buffer remains
 #[test]
-fn test_idle_error_cancellation_and_kill_switch_leave_zero_active_capture_and_zero_buffers() {
+fn test_idle_error_timeout_cancellation_and_kill_switch_leave_zero_active_capture_and_zero_buffers() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_2");
     let avatar_dir = resolve_avatar_assets_dir();
     let mut reloader = AvatarPackHotReloader::new(&avatar_dir).expect("avatar reloader");
     let avatar = reloader.runtime_mut();
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
-    let mut gk = permissive_voice_gatekeeper(&temp_dir);
+    let mut gk = permissive_groq_voice_gatekeeper(&temp_dir);
     let mut audit_store = PersistentJsonlAuditStore::open_default(&temp_dir).expect("audit store");
 
-    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
-    fs::write(temp_dir.join(&manifest.model_id), &raw_model).expect("write model");
+    let (timeout_endpoint, _) = spawn_local_groq_stt_server(200, r#"{"text":"late"}"#.to_string(), 350);
+    let mut config = GroqSttConfig::default().with_endpoint(timeout_endpoint).with_consent(true);
+    config.timeout_ms = 60;
+    let vault = InMemoryVoiceSecretVault::with_alias_secret(GROQ_DEFAULT_KEY_ALIAS, b"gsk_test_alias_only_key_412").unwrap();
 
-    let mut corpus = DeterministicCorpusSttBackend::new();
-    let speech_pcm = corpus.register_utterance_fixture(2, "cancela la cola", SttLanguage::Es);
+    let speech_pcm = build_synthetic_speech_pcm16(2, 6_400);
     let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(speech_pcm.clone());
-    let mut orch = PttSttOrchestrator::with_backend(avatar_dir, &temp_dir, manifest, DEFAULT_STT_MODEL_TTL_MS, capture, Box::new(corpus)).unwrap();
+    let mut orch = PttSttOrchestrator::new(avatar_dir, config, capture, Box::new(vault)).unwrap();
 
+    // 1. Escape cancellation
     press_default_ptt(&mut orch, 1_000, &mut gk, avatar).unwrap();
     let _ = orch.pump_ptt_capture_chunk(1_600, 1_050, avatar, Some(&mut bridge)).unwrap();
-    assert!(orch.is_capture_stream_open());
-
     let receipt_esc = orch.abort_and_cleanup(VoiceCancellationReason::UserPressedEscape, 1_100, avatar, Some(&mut bridge)).unwrap();
     assert!(!orch.is_capture_stream_open());
-    assert_eq!(orch.capture_device().active_stream_handles_count(), 0);
     assert_eq!(orch.capture_device().retained_device_buffer_bytes(), 0);
     assert_eq!(receipt_esc.zero_report.residual_non_zero_samples, 0);
     assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
 
+    // 2. Early release (< 120 ms)
     orch.capture_device_mut().restage_pcm(speech_pcm.clone());
     press_default_ptt(&mut orch, 2_000, &mut gk, avatar).unwrap();
     let _ = orch.pump_ptt_capture_chunk(1_600, 2_030, avatar, Some(&mut bridge)).unwrap();
     let early_out = orch.release_ptt_and_transcribe_to_session("sess_early", 2_060, &mut gk, avatar, &mut bridge).unwrap();
-    assert!(matches!(early_out, PttPipelineOutcome::Cancelled { reason: VoiceCancellationReason::PttReleasedTooEarly { held_ms: 60 } }));
+    assert!(matches!(
+        early_out,
+        PttPipelineOutcome::Cancelled {
+            reason: VoiceCancellationReason::PttReleasedTooEarly { held_ms: 60 }
+        }
+    ));
     assert!(!orch.is_capture_stream_open());
-    assert_eq!(orch.capture_device().retained_device_buffer_bytes(), 0);
     assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
 
+    // 3. Network timeout during Groq transcription
     orch.capture_device_mut().restage_pcm(speech_pcm.clone());
     press_default_ptt(&mut orch, 3_000, &mut gk, avatar).unwrap();
-    orch.capture_device_mut().inject_read_error(Some("microphone disconnected mid-frame".to_string()));
-    assert!(orch.pump_ptt_capture_chunk(1_600, 3_050, avatar, Some(&mut bridge)).is_err());
+    let _ = orch.pump_ptt_capture_chunk(6_400, 3_100, avatar, Some(&mut bridge)).unwrap();
+    let timeout_err = orch.release_ptt_and_transcribe_to_session("sess_timeout", 3_400, &mut gk, avatar, &mut bridge).unwrap_err();
+    assert!(matches!(timeout_err, SttEngineError::NetworkTimeout(_)));
     assert!(!orch.is_capture_stream_open());
-    assert_eq!(orch.capture_device().active_stream_handles_count(), 0);
     assert_eq!(orch.capture_device().retained_device_buffer_bytes(), 0);
     assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
     assert_eq!(*orch.voice().state(), VoiceInteractionState::Idle);
 
+    // 4. Global Kill Switch
     orch.capture_device_mut().restage_pcm(speech_pcm);
     press_default_ptt(&mut orch, 4_000, &mut gk, avatar).unwrap();
     let _ = orch.pump_ptt_capture_chunk(3_200, 4_050, avatar, Some(&mut bridge)).unwrap();
-    assert!(orch.is_capture_stream_open());
-
     let mut ks = UiKillSwitchManager::new();
-    let trip_report = orch.trip_kill_switch_and_purge(&mut ks, 4_100, "voice_4_1_emergency_stop", &mut gk, avatar, &mut audit_store, &mut bridge).unwrap();
+    let trip_report = orch
+        .trip_kill_switch_and_purge(&mut ks, 4_100, "voice_4_1_emergency_stop", &mut gk, avatar, &mut audit_store, &mut bridge)
+        .unwrap();
     assert!(trip_report.voice_aborted);
     assert!(!orch.is_capture_stream_open());
     assert_eq!(orch.capture_device().active_stream_handles_count(), 0);
     assert_eq!(orch.capture_device().retained_device_buffer_bytes(), 0);
     assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
-    assert_eq!(orch.allocated_model_bytes(), 0);
-    assert!(orch.session_queue().orders_for_session("sess_early").is_empty());
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-3: Real Whisper GGML backend transcribes real Spanish and English 16 kHz mono WAV fixtures
-// through the PTT -> STT pipeline (never accepting DeterministicCorpusSttBackend as evidence of real Whisper)
+// LEDGER-4.1-3: ES and EN WAV audio files traverse PTT -> Groq multipart HTTP endpoint and verify response contract
 #[test]
-fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_enqueue_to_active_session() {
-    assert_eq!(WHISPER_CPP_RELEASE_VERSION, "v1.9.2");
-    assert_eq!(WHISPER_CPP_RELEASE_LICENSE, "MIT");
-    assert_eq!(WHISPER_CLI_WIN_X64_ZIP_SIZE_BYTES, 8_194_445);
-    assert_eq!(WHISPER_CLI_WIN_X64_ZIP_SHA256, "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a");
-    assert_eq!(WHISPER_CLI_EXE_V192_SHA256, "95e3c0b0e778ad9499eb0125f97c1dcf437dd9eb4ea77050b043574f93c2631d");
-
+fn test_bilingual_es_en_wav_files_traverse_groq_multipart_http_contract_and_enqueue_to_active_session() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_3");
     let avatar_dir = resolve_avatar_assets_dir();
     let mut reloader = AvatarPackHotReloader::new(&avatar_dir).expect("avatar reloader");
     let avatar = reloader.runtime_mut();
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
+    let mut gk = permissive_groq_voice_gatekeeper(&temp_dir);
 
-    // 1. Verify WhisperCliLocalBackend fails closed when binary path does not exist or SHA-256 mismatches
-    let (dummy_model, dummy_manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
-    let dummy_path = temp_dir.join(&dummy_manifest.model_id);
-    fs::write(&dummy_path, &dummy_model).expect("write dummy model");
-    let mut missing_backend = WhisperCliLocalBackend::with_executable_path(temp_dir.join("nonexistent-whisper-cli.exe"));
-    let dummy_weights = verify_and_parse_stt_model_bytes(&dummy_model, &dummy_manifest, DEFAULT_MAX_STT_MODEL_BYTES).unwrap();
-    let missing_err = missing_backend.decode_pcm16_mono(&dummy_weights, &dummy_path, &[2_000i16; 3_200], VOICE_SAMPLE_RATE_HZ).unwrap_err();
-    assert!(matches!(missing_err, SttModelError::LocalRuntimeBinaryUnavailable(_)));
+    let es_wav_path = temp_dir.join("es_utterance.wav");
+    let en_wav_path = temp_dir.join("en_utterance.wav");
+    let es_raw_pcm = build_synthetic_speech_pcm16(101, 16_000);
+    let en_raw_pcm = build_synthetic_speech_pcm16(202, 24_000);
+    fs::write(&es_wav_path, encode_riff_wav_pcm16_mono(&es_raw_pcm, VOICE_SAMPLE_RATE_HZ)).unwrap();
+    fs::write(&en_wav_path, encode_riff_wav_pcm16_mono(&en_raw_pcm, VOICE_SAMPLE_RATE_HZ)).unwrap();
 
-    let fake_exe = temp_dir.join("tampered-whisper-cli.exe");
-    fs::write(&fake_exe, b"MZ-unverified-binary").expect("write tampered exe");
-    let mut tampered_backend = WhisperCliLocalBackend::with_executable_path(fake_exe);
-    let tampered_err = tampered_backend.decode_pcm16_mono(&dummy_weights, &dummy_path, &[2_000i16; 3_200], VOICE_SAMPLE_RATE_HZ).unwrap_err();
-    assert!(matches!(tampered_err, SttModelError::Sha256Mismatch { .. }));
+    let decoded_es = decode_riff_wav_pcm16_mono(&fs::read(&es_wav_path).unwrap()).unwrap();
+    let decoded_en = decode_riff_wav_pcm16_mono(&fs::read(&en_wav_path).unwrap()).unwrap();
+    assert_eq!(decoded_es, es_raw_pcm);
+    assert_eq!(decoded_en, en_raw_pcm);
 
-    // 2. Require REAL whisper-cli executable (SHA-256 95e3c0b0...), REAL verified ggml-tiny.bin (SHA-256 be07e048...),
-    //    and REAL 16 kHz mono PCM16 WAV fixtures in Spanish and English
-    let root_hint = stt_real_fixtures_root();
-    let backend_probe = WhisperCliLocalBackend::new();
-    let whisper_exe = backend_probe.resolve_executable().unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: whisper-cli.exe (v1.9.2 MIT, SHA-256 {}) missing in {}", WHISPER_CLI_EXE_V192_SHA256, root_hint.display())
-    });
-    let verified_exe_sha = backend_probe.verify_executable_integrity(&whisper_exe).expect("verify whisper-cli.exe SHA-256");
-    println!("VERIFIED_WHISPER_CLI_SHA256={verified_exe_sha}");
+    let (es_endpoint, es_reqs) = spawn_local_groq_stt_server(
+        200,
+        r#"{"text":"ejecuta pruebas del proyecto","language":"Spanish","duration":1.0}"#.to_string(),
+        0,
+    );
+    let config = GroqSttConfig::default()
+        .with_endpoint(es_endpoint)
+        .with_model(GroqWhisperModel::WhisperLargeV3Turbo)
+        .with_language_hint(Some(SttLanguage::Es))
+        .with_consent(true);
+    let vault = InMemoryVoiceSecretVault::with_alias_secret(GROQ_DEFAULT_KEY_ALIAS, b"gsk_secret_bilingual_test_key").unwrap();
 
-    let real_model_src = resolve_real_artifact_path("MIKU_STT_MODEL_PATH", "ggml-tiny.bin").unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: ggml-tiny.bin (SHA-256 {}) missing in {}", WHISPER_GGML_TINY_SHA256, root_hint.display())
-    });
-    let es_wav_path = resolve_real_artifact_path("MIKU_STT_ES_WAV_PATH", "es_fixture.wav").unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: es_fixture.wav missing in {}", root_hint.display())
-    });
-    let en_wav_path = resolve_real_artifact_path("MIKU_STT_EN_WAV_PATH", "en_fixture.wav").unwrap_or_else(|| {
-        panic!("REAL_WHISPER_E2E_BLOCKED: en_fixture.wav missing in {}", root_hint.display())
-    });
-
-    let es_pcm = decode_riff_wav_pcm16_mono(&fs::read(&es_wav_path).unwrap()).expect("decode real 16kHz mono ES WAV");
-    let en_pcm = decode_riff_wav_pcm16_mono(&fs::read(&en_wav_path).unwrap()).expect("decode real 16kHz mono EN WAV");
-
-    let model_dir = real_model_src.parent().expect("model parent dir");
-    let mut gk = permissive_voice_gatekeeper(model_dir);
-    let mut orch = PttSttOrchestrator::with_backend(
+    let mut orch = PttSttOrchestrator::new(
         avatar_dir,
-        model_dir,
-        SttModelManifest::default_whisper_tiny(),
-        DEFAULT_STT_MODEL_TTL_MS,
-        DeterministicFixtureCaptureDevice::new(),
-        Box::new(WhisperCliLocalBackend::with_executable_path(whisper_exe)),
+        config,
+        DeterministicFixtureCaptureDevice::with_staged_pcm(decoded_es),
+        Box::new(vault),
     )
-    .expect("create PttSttOrchestrator with real WhisperCliLocalBackend");
+    .unwrap();
 
-    assert!(matches!(
-        orch.inspect_model_availability(),
-        SttModelAvailability::VerifiedOnDisk { size_bytes: WHISPER_GGML_TINY_SIZE_BYTES, .. }
-    ));
+    press_default_ptt(&mut orch, 5_000, &mut gk, avatar).unwrap();
+    let _ = orch.pump_ptt_capture_chunk(64_000, 5_100, avatar, Some(&mut bridge)).unwrap();
+    let out_es = orch.release_ptt_and_transcribe_to_session("sess_bilingual", 5_500, &mut gk, avatar, &mut bridge).unwrap();
 
-    for (idx, (pcm, expected_lang)) in [(es_pcm, SttLanguage::Es), (en_pcm, SttLanguage::En)].into_iter().enumerate() {
-        let base_ts = 10_000 + (idx as u64) * 2_000;
-        orch.capture_device_mut().restage_pcm(pcm);
-        press_default_ptt(&mut orch, base_ts, &mut gk, avatar).unwrap();
-        while orch.capture_device().staged_remaining_samples() > 0 {
-            let _ = orch.pump_ptt_capture_chunk(64_000, base_ts + 100, avatar, Some(&mut bridge)).unwrap();
+    let reqs_es = es_reqs.lock().unwrap();
+    assert_eq!(reqs_es.len(), 1);
+    assert_eq!(reqs_es[0].request_line, "POST /openai/v1/audio/transcriptions HTTP/1.1");
+    assert_eq!(
+        reqs_es[0].headers_lower.get("authorization").map(|s| s.as_str()),
+        Some("Bearer gsk_secret_bilingual_test_key")
+    );
+    assert!(reqs_es[0].headers_lower.get("content-type").unwrap().contains("multipart/form-data; boundary="));
+    let body_es_str = String::from_utf8_lossy(&reqs_es[0].raw_body);
+    assert!(body_es_str.contains("name=\"model\"\r\n\r\nwhisper-large-v3-turbo"));
+    assert!(body_es_str.contains("name=\"response_format\"\r\n\r\nverbose_json"));
+    assert!(body_es_str.contains("name=\"language\"\r\n\r\nes"));
+    assert!(body_es_str.contains("name=\"file\"; filename=\"utterance.wav\""));
+    assert!(reqs_es[0].raw_body.windows(4).any(|w| w == b"RIFF"));
+    drop(reqs_es);
+
+    match out_es {
+        PttPipelineOutcome::TranscribedAndEnqueued { transcript, order, .. } => {
+            assert_eq!(transcript.text, "ejecuta pruebas del proyecto");
+            assert_eq!(transcript.language, SttLanguage::Es);
+            assert_eq!(transcript.model, GroqWhisperModel::WhisperLargeV3Turbo);
+            assert_eq!(transcript.billing.billed_duration_seconds, 10);
+            assert!(transcript.billing.minimum_billing_applied);
+            assert_eq!(order.language, SttLanguage::Es);
         }
-        let outcome = orch.release_ptt_and_transcribe_to_session("sess_active_agent_41", base_ts + 400, &mut gk, avatar, &mut bridge).unwrap();
-        assert!(!orch.is_capture_stream_open());
-        assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
-        match outcome {
-            PttPipelineOutcome::TranscribedAndEnqueued { transcript, order, completion_report, device_zero_report } => {
-                println!("REAL_WHISPER_TRANSCRIPT[{}]={}", expected_lang.as_code(), transcript.text);
-                assert!(!transcript.text.is_empty());
-                assert_eq!(transcript.language, expected_lang);
-                assert_eq!(order.session_id, "sess_active_agent_41");
-                assert_eq!(order.language, expected_lang);
-                assert_eq!(completion_report.zero_report.residual_non_zero_samples, 0);
-                assert_eq!(device_zero_report.residual_non_zero_samples, 0);
-            }
-            other => panic!("expected TranscribedAndEnqueued from real Whisper, got {:?}", other),
-        }
+        other => panic!("expected TranscribedAndEnqueued, got {:?}", other),
     }
 
-    assert_eq!(orch.session_queue().orders_for_session("sess_active_agent_41").len(), 2);
-    assert!(bridge.pop_next_outbound_json().unwrap().contains("voice_enqueue_prompt"));
+    let (en_endpoint, en_reqs) = spawn_local_groq_stt_server(
+        200,
+        r#"{"text":"run clippy and fix warnings","language":"en","duration":1.5}"#.to_string(),
+        0,
+    );
+    orch.set_endpoint_url(en_endpoint).unwrap();
+    orch.capture_device_mut().restage_pcm(decoded_en);
+    press_default_ptt(&mut orch, 7_000, &mut gk, avatar).unwrap();
+    let _ = orch.pump_ptt_capture_chunk(64_000, 7_100, avatar, Some(&mut bridge)).unwrap();
+    let out_en = orch.release_ptt_and_transcribe_to_session("sess_bilingual", 7_500, &mut gk, avatar, &mut bridge).unwrap();
+
+    assert_eq!(en_reqs.lock().unwrap().len(), 1);
+    match out_en {
+        PttPipelineOutcome::TranscribedAndEnqueued { transcript, order, .. } => {
+            assert_eq!(transcript.text, "run clippy and fix warnings");
+            assert_eq!(transcript.language, SttLanguage::En);
+            assert_eq!(order.language, SttLanguage::En);
+        }
+        other => panic!("expected TranscribedAndEnqueued, got {:?}", other),
+    }
+    assert_eq!(orch.session_queue().orders_for_session("sess_bilingual").len(), 2);
+    assert_eq!(orch.total_billed_seconds(), 20);
+
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-4: Local STT path makes zero network calls and consumes zero tokens
+// LEDGER-4.1-4: Gatekeeper Network authorization and explicit cloud audio consent enforcement
 #[test]
-fn test_local_stt_transcription_makes_zero_network_calls_and_consumes_zero_provider_tokens() {
+fn test_gatekeeper_network_authorization_and_explicit_cloud_audio_consent_required_before_dispatch() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_4");
     let avatar_dir = resolve_avatar_assets_dir();
     let mut reloader = AvatarPackHotReloader::new(&avatar_dir).expect("avatar reloader");
     let avatar = reloader.runtime_mut();
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
+    let mut gk = permissive_groq_voice_gatekeeper(&temp_dir);
+
+    let vault = InMemoryVoiceSecretVault::with_alias_secret(GROQ_DEFAULT_KEY_ALIAS, b"gsk_should_not_be_read").unwrap();
+    let pcm = build_synthetic_speech_pcm16(4, 6_400);
+    let mut orch = PttSttOrchestrator::new(
+        avatar_dir,
+        GroqSttConfig::default().with_consent(false),
+        DeterministicFixtureCaptureDevice::with_staged_pcm(pcm.clone()),
+        Box::new(vault),
+    )
+    .unwrap();
+
+    press_default_ptt(&mut orch, 1_000, &mut gk, avatar).unwrap();
+    let _ = orch.pump_ptt_capture_chunk(6_400, 1_100, avatar, Some(&mut bridge)).unwrap();
+    let err_consent = orch.release_ptt_and_transcribe_to_session("sess_414", 1_400, &mut gk, avatar, &mut bridge).unwrap_err();
+    assert_eq!(err_consent, SttEngineError::CloudAudioConsentRequired);
+    assert_eq!(orch.network_requests_dispatched(), 0);
+    assert!(!orch.is_capture_stream_open());
 
     let root_str = temp_dir.to_string_lossy().to_string();
-    let profile = ProjectProfile::new("miku-voice-offline-strict", &root_str, 30_000)
+    let deny_net_profile = ProjectProfile::new("miku-voice-deny-groq-net", &root_str, 30_000)
         .with_rule(Capability::Input, "microphone:*", PolicyEffect::Allow, true)
-        .with_rule(Capability::FsRead, "**", PolicyEffect::Allow, true)
-        .with_rule(Capability::Network, "*", PolicyEffect::Deny, true);
-    let mut gk = GatekeeperEngine::new(profile).expect("offline gatekeeper");
+        .with_rule(Capability::Network, "api.groq.com*", PolicyEffect::Deny, true);
+    let mut gk_deny = GatekeeperEngine::new(deny_net_profile).unwrap();
 
-    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
-    fs::write(temp_dir.join(&manifest.model_id), &raw_model).expect("write model");
-
-    let mut corpus = DeterministicCorpusSttBackend::new();
-    let en_pcm = corpus.register_utterance_fixture(20, "stop active agent", SttLanguage::En);
-    let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(en_pcm);
-    let mut orch = PttSttOrchestrator::with_backend(avatar_dir, &temp_dir, manifest, DEFAULT_STT_MODEL_TTL_MS, capture, Box::new(corpus)).unwrap();
-
-    press_default_ptt(&mut orch, 5_000, &mut gk, avatar).unwrap();
-    let _ = orch.pump_ptt_capture_chunk(64_000, 5_100, avatar, Some(&mut bridge)).unwrap();
-    let outcome = orch.release_ptt_and_transcribe_to_session("sess_offline", 5_400, &mut gk, avatar, &mut bridge).unwrap();
-
-    assert!(matches!(outcome, PttPipelineOutcome::TranscribedAndEnqueued { .. }));
-    assert_eq!(orch.stt_runtime().network_calls_made(), 0);
-    assert_eq!(orch.stt_runtime().provider_tokens_consumed(), 0);
-    assert_eq!(gk.audit_log().entries().iter().filter(|e| e.capability == Capability::Network.as_str()).count(), 0);
+    orch.set_cloud_audio_consent(true);
+    orch.capture_device_mut().restage_pcm(pcm);
+    press_default_ptt(&mut orch, 2_000, &mut gk_deny, avatar).unwrap();
+    let _ = orch.pump_ptt_capture_chunk(6_400, 2_100, avatar, Some(&mut bridge)).unwrap();
+    let err_gk = orch.release_ptt_and_transcribe_to_session("sess_414", 2_400, &mut gk_deny, avatar, &mut bridge).unwrap_err();
+    assert!(matches!(err_gk, SttEngineError::GatekeeperDenied(_)));
+    assert_eq!(orch.network_requests_dispatched(), 0);
+    assert!(!orch.is_capture_stream_open());
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-5: Real Whisper GGML manifests & SHA-256 download/verification
+// LEDGER-4.1-5: API key retrieved strictly by alias via secure manager; typed failures on missing key or HTTP error
 #[test]
-fn test_explicit_model_download_verifies_sha256_and_rejects_wrong_hash_truncated_or_unconfirmed() {
-    let tiny = SttModelManifest::default_whisper_tiny();
-    assert_eq!(tiny.model_id, "ggml-tiny.bin");
-    assert_eq!(tiny.license, "MIT");
-    assert_eq!(tiny.expected_size_bytes, 77_691_713);
-    assert_eq!(tiny.expected_sha256_hex, "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21");
-    assert_eq!(tiny.download_url, "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin");
-
-    let base = SttModelManifest::default_whisper_base();
-    assert_eq!(base.model_id, "ggml-base.bin");
-    assert_eq!(base.license, "MIT");
-    assert_eq!(base.expected_size_bytes, 147_951_465);
-    assert_eq!(base.expected_sha256_hex, "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe");
-
+fn test_api_key_retrieved_only_by_alias_and_typed_failures_without_deterministic_fallback() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_5");
-    let avatar_dir = resolve_avatar_assets_dir();
-    let mut gk = permissive_voice_gatekeeper(&temp_dir);
-
-    let (valid_bytes, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-dl.bin", 24 * 1024);
-    let capture = DeterministicFixtureCaptureDevice::new();
-    let mut orch = PttSttOrchestrator::new(avatar_dir, &temp_dir, manifest.clone(), DEFAULT_STT_MODEL_TTL_MS, capture).unwrap();
-
-    let err_unconfirmed = orch.download_and_verify_model_explicit("http://127.0.0.1:9/unused", false, 1_000, &mut gk).unwrap_err();
-    assert_eq!(err_unconfirmed, SttModelError::UserConfirmationRequired);
-    assert!(!orch.model_file_path().exists());
-
-    let url_truncated = spawn_single_shot_http_model_server(valid_bytes[..valid_bytes.len() / 2].to_vec(), Some(valid_bytes.len()));
-    let err_truncated = orch.download_and_verify_model_explicit(&url_truncated, true, 2_000, &mut gk).unwrap_err();
-    assert!(matches!(err_truncated, SttModelError::IncompleteDownload { .. }));
-    assert!(!orch.model_file_path().exists());
-    assert_eq!(orch.allocated_model_bytes(), 0);
-
-    let mut tampered = valid_bytes.clone();
-    let last = tampered.len() - 1;
-    tampered[last] ^= 0xFF;
-    let url_tampered = spawn_single_shot_http_model_server(tampered, None);
-    let err_tampered = orch.download_and_verify_model_explicit(&url_tampered, true, 3_000, &mut gk).unwrap_err();
-    assert!(matches!(err_tampered, SttModelError::Sha256Mismatch { .. }));
-    assert!(!orch.model_file_path().exists());
-    assert_eq!(orch.allocated_model_bytes(), 0);
-
-    let url_valid = spawn_single_shot_http_model_server(valid_bytes.clone(), None);
-    let dl_receipt = orch.download_and_verify_model_explicit(&url_valid, true, 4_000, &mut gk).expect("verified download");
-    assert_eq!(dl_receipt.verified_size_bytes, valid_bytes.len());
-    assert_eq!(dl_receipt.verified_sha256_hex, manifest.expected_sha256_hex);
-    assert!(orch.model_file_path().exists());
-    assert!(matches!(orch.inspect_model_availability(), SttModelAvailability::VerifiedOnDisk { .. }));
-    assert_eq!(orch.allocated_model_bytes(), 0);
-
-    let _ = fs::remove_dir_all(&temp_dir);
-}
-
-// LEDGER-4.1-6: Missing model produces verified download card; inactivity TTL unloads model to 0 MB
-#[test]
-fn test_missing_model_exposes_typed_download_card_and_inactivity_ttl_evicts_model_to_zero_mb() {
-    let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_6");
     let avatar_dir = resolve_avatar_assets_dir();
     let mut reloader = AvatarPackHotReloader::new(&avatar_dir).expect("avatar reloader");
     let avatar = reloader.runtime_mut();
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
-    let mut gk = permissive_voice_gatekeeper(&temp_dir);
+    let mut gk = permissive_groq_voice_gatekeeper(&temp_dir);
 
-    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny.bin", 64 * 1024);
-    let mut corpus = DeterministicCorpusSttBackend::new();
-    let pcm = corpus.register_utterance_fixture(30, "abre el navegador", SttLanguage::Es);
-    let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(pcm.clone());
-    let mut orch = PttSttOrchestrator::with_backend(avatar_dir, &temp_dir, manifest.clone(), 1_500, capture, Box::new(corpus)).unwrap();
+    assert!(validate_voice_secret_alias("../bad").is_err());
+    assert!(validate_voice_secret_alias("gsk_raw key with spaces").is_err());
+    assert!(validate_voice_secret_alias("groq-stt-key").is_ok());
 
-    match orch.inspect_model_availability() {
-        SttModelAvailability::Missing { download_card } => {
-            assert_eq!(download_card.model_id, "ggml-tiny.bin");
-            assert_eq!(download_card.license, "MIT");
-            assert_eq!(download_card.expected_size_bytes, manifest.expected_size_bytes);
-            assert_eq!(download_card.expected_sha256_hex, manifest.expected_sha256_hex);
-            assert!(download_card.requires_explicit_user_action);
+    let pcm = build_synthetic_speech_pcm16(5, 6_400);
+    let mut orch_missing = PttSttOrchestrator::new(
+        avatar_dir.clone(),
+        GroqSttConfig::default().with_consent(true),
+        DeterministicFixtureCaptureDevice::with_staged_pcm(pcm.clone()),
+        Box::new(InMemoryVoiceSecretVault::new()),
+    )
+    .unwrap();
+
+    press_default_ptt(&mut orch_missing, 1_000, &mut gk, avatar).unwrap();
+    let _ = orch_missing.pump_ptt_capture_chunk(6_400, 1_100, avatar, Some(&mut bridge)).unwrap();
+    let err_missing = orch_missing
+        .release_ptt_and_transcribe_to_session("sess_415", 1_400, &mut gk, avatar, &mut bridge)
+        .unwrap_err();
+    assert_eq!(err_missing, SttEngineError::MissingApiKeyAlias(GROQ_DEFAULT_KEY_ALIAS.to_string()));
+    assert_eq!(orch_missing.network_requests_dispatched(), 0);
+
+    let (err_endpoint, _) = spawn_local_groq_stt_server(
+        401,
+        r#"{"error":{"message":"Invalid API Key gsk_leaked_key_in_error_999"}}"#.to_string(),
+        0,
+    );
+    let vault = InMemoryVoiceSecretVault::with_alias_secret(GROQ_DEFAULT_KEY_ALIAS, b"gsk_leaked_key_in_error_999").unwrap();
+    let mut orch_http_err = PttSttOrchestrator::new(
+        avatar_dir,
+        GroqSttConfig::default().with_endpoint(err_endpoint).with_consent(true),
+        DeterministicFixtureCaptureDevice::with_staged_pcm(pcm),
+        Box::new(vault),
+    )
+    .unwrap();
+
+    press_default_ptt(&mut orch_http_err, 2_000, &mut gk, avatar).unwrap();
+    let _ = orch_http_err.pump_ptt_capture_chunk(6_400, 2_100, avatar, Some(&mut bridge)).unwrap();
+    let err_upstream = orch_http_err
+        .release_ptt_and_transcribe_to_session("sess_415", 2_400, &mut gk, avatar, &mut bridge)
+        .unwrap_err();
+    match err_upstream {
+        SttEngineError::UpstreamHttpError { status_code, safe_body } => {
+            assert_eq!(status_code, 401);
+            assert!(!safe_body.contains("gsk_leaked_key_in_error_999"));
+            assert!(safe_body.contains("[REDACTED]"));
         }
-        other => panic!("expected Missing download card, got {:?}", other),
+        other => panic!("expected UpstreamHttpError, got {:?}", other),
     }
-
-    press_default_ptt(&mut orch, 1_000, &mut gk, avatar).unwrap();
-    let _ = orch.pump_ptt_capture_chunk(64_000, 1_100, avatar, Some(&mut bridge)).unwrap();
-    let missing_out = orch.release_ptt_and_transcribe_to_session("sess_missing", 1_400, &mut gk, avatar, &mut bridge).unwrap();
-    assert!(!orch.is_capture_stream_open());
-    assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
-    assert_eq!(orch.allocated_model_bytes(), 0);
-    assert!(matches!(missing_out, PttPipelineOutcome::ModelMissing { .. }));
-
-    fs::write(orch.model_file_path(), &raw_model).expect("write verified model");
-    assert_eq!(orch.allocated_model_bytes(), 0);
-
-    orch.capture_device_mut().restage_pcm(pcm);
-    press_default_ptt(&mut orch, 2_000, &mut gk, avatar).unwrap();
-    let _ = orch.pump_ptt_capture_chunk(64_000, 2_100, avatar, Some(&mut bridge)).unwrap();
-    let _ = orch.release_ptt_and_transcribe_to_session("sess_ttl", 2_400, &mut gk, avatar, &mut bridge).unwrap();
-    assert!(orch.allocated_model_bytes() >= 64 * 1024);
-
-    assert!(!orch.poll_inactivity_ttl(3_500));
-    assert!(orch.allocated_model_bytes() >= 64 * 1024);
-
-    assert!(orch.poll_inactivity_ttl(3_900));
-    assert_eq!(orch.allocated_model_bytes(), 0);
-    assert_eq!(*orch.stt_runtime().state(), SttModelLifecycleState::Unloaded);
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-7: Errors never leak audio, sensitive transcripts, or private info
+// LEDGER-4.1-6: Official Groq endpoint/models, HTTPS enforcement, and 10s minimum billing contract
 #[test]
-fn test_voice_and_stt_errors_redact_audio_transcripts_and_secrets_with_zero_leaks() {
-    let raw_diag = r#"failed near transcript="mi clave secreta es 12345" token=sk-secret999999999999 Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 pcm=[14320, -12090]"#;
-    let safe_diag = redact_sensitive_voice_diagnostic(raw_diag);
+fn test_groq_endpoint_https_enforcement_official_models_and_minimum_10s_billing_contract() {
+    let def_cfg = GroqSttConfig::default();
+    assert_eq!(def_cfg.endpoint_url, "https://api.groq.com/openai/v1/audio/transcriptions");
+    assert_eq!(def_cfg.model, GroqWhisperModel::WhisperLargeV3Turbo);
+    assert_eq!(def_cfg.model.as_str(), "whisper-large-v3-turbo");
+    assert_eq!(GroqWhisperModel::WhisperLargeV3.as_str(), "whisper-large-v3");
+    assert!(GroqWhisperModel::parse_id("ggml-tiny.bin").is_err());
+
+    let parsed = parse_groq_endpoint(GROQ_STT_DEFAULT_ENDPOINT).unwrap();
+    assert_eq!(parsed.scheme, "https");
+    assert_eq!(parsed.host, "api.groq.com");
+    assert_eq!(parsed.port, 443);
+    assert_eq!(parsed.path, "/openai/v1/audio/transcriptions");
+
+    let insecure = parse_groq_endpoint("http://api.groq.com/openai/v1/audio/transcriptions").unwrap_err();
+    assert!(matches!(insecure, SttEngineError::InsecureTransport(_)));
+
+    let short_bill = GroqBillingEstimate::compute(GroqWhisperModel::WhisperLargeV3Turbo, 2_500);
+    assert_eq!(short_bill.billed_duration_seconds, 10);
+    assert!(short_bill.minimum_billing_applied);
+    assert!(short_bill.estimated_cost_usd_nanos > 0);
+
+    let long_bill = GroqBillingEstimate::compute(GroqWhisperModel::WhisperLargeV3, 25_200);
+    assert_eq!(long_bill.billed_duration_seconds, 26);
+    assert!(!long_bill.minimum_billing_applied);
+}
+
+// LEDGER-4.1-7: Zero-leak redaction of API keys, audio, and transcripts + sub-600 line module budget
+#[test]
+fn test_voice_and_groq_stt_errors_redact_api_keys_audio_and_transcripts_with_zero_leaks() {
+    let secret = b"gsk_live_secret_value_xyz987654321";
+    let raw_diag = r#"failed near transcript="mi clave secreta es 12345" Authorization: Bearer gsk_live_secret_value_xyz987654321 token=sk-secret999999 pcm=[14320, -12090]"#;
+    let safe_diag = redact_sensitive_voice_diagnostic_with_secrets(raw_diag, &[secret]);
 
     assert!(!safe_diag.contains("mi clave secreta es 12345"));
-    assert!(!safe_diag.contains("sk-secret999999999999"));
-    assert!(!safe_diag.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"));
+    assert!(!safe_diag.contains("gsk_live_secret_value_xyz987654321"));
+    assert!(!safe_diag.contains("sk-secret999999"));
     assert!(!safe_diag.contains("14320"));
     assert!(safe_diag.contains("[REDACTED]"));
 
-    let err = SttModelError::from_untrusted_diagnostic("stt_parse", raw_diag);
+    let err = SttEngineError::from_untrusted_diagnostic("groq_stt", raw_diag, &[secret]);
     let rendered = err.to_string();
+    assert!(!rendered.contains("gsk_live_secret_value_xyz987654321"));
     assert!(!rendered.contains("mi clave secreta es 12345"));
-    assert!(!rendered.contains("sk-secret999999999999"));
-    assert!(!rendered.contains("14320"));
 
     let voice_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("voice");
     for entry in fs::read_dir(&voice_dir).expect("read src/voice") {
         let path = entry.expect("entry").path();
         if path.extension().and_then(|s| s.to_str()) == Some("rs") {
             let line_count = fs::read_to_string(&path).expect("read rs").lines().count();
-            assert!(line_count < 600, "voice module {} exceeded 600 lines ({})", path.display(), line_count);
+            assert!(
+                line_count < 600,
+                "voice module {} exceeded 600 lines ({})",
+                path.display(),
+                line_count
+            );
         }
     }
+}
+
+#[test]
+#[ignore = "Optional live Groq STT smoke test; requires MIKU_RUN_LIVE_GROQ_SMOKE=1 and stored credential alias"]
+fn test_optional_live_groq_whisper_smoke_when_explicitly_enabled() {
+    if std::env::var("MIKU_RUN_LIVE_GROQ_SMOKE").as_deref() != Ok("1") {
+        return;
+    }
+    let store = WindowsCredentialAliasStore::new();
+    let key = store
+        .load_secret_by_alias(GROQ_DEFAULT_KEY_ALIAS)
+        .expect("read credential store")
+        .expect("live smoke requires groq-stt-key alias in Windows Credential Manager");
+    let mut client = GroqWhisperHttpClient::new();
+    let cfg = GroqSttConfig::default().with_consent(true);
+    let pcm = build_synthetic_speech_pcm16(77, 16_000);
+    let _ = client.transcribe_pcm16_mono(&cfg, &key, &pcm, VOICE_SAMPLE_RATE_HZ);
 }

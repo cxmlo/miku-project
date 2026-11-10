@@ -1,106 +1,89 @@
 #![allow(unused_imports)]
 use crate::prelude::*;
-use std::collections::BTreeMap;
-use std::process::Command;
+use std::io::{Read, Write as IoWrite};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{compiler_fence, Ordering as AtomicOrdering};
+use std::time::Duration;
 
-pub trait LocalSttDecoderBackend: Send {
-    fn decode_pcm16_mono(
-        &mut self,
-        weights: &VerifiedSttModelWeights,
-        model_file_path: &Path,
-        pcm: &[i16],
-        sample_rate_hz: u32,
-    ) -> Result<LocalSttTranscript, SttModelError>;
+pub const GROQ_MULTIPART_BOUNDARY: &str = "MikuGroqSttBoundaryV1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroqEndpointTarget {
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+    pub path: String,
 }
 
-#[derive(Default)]
-pub struct WhisperCliLocalBackend {
-    pub executable_override: Option<PathBuf>,
-    pub expected_exe_sha256: Option<String>,
+pub fn is_loopback_host(host: &str) -> bool {
+    let clean = host.trim().trim_start_matches('[').trim_end_matches(']');
+    if clean.eq_ignore_ascii_case("localhost") || clean.to_ascii_lowercase().ends_with(".localhost") {
+        return true;
+    }
+    clean.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
 }
 
-impl WhisperCliLocalBackend {
-    pub fn new() -> Self {
-        let expected_sha = std::env::var("MIKU_WHISPER_CLI_SHA256")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| WHISPER_CLI_EXE_V192_SHA256.to_string());
-        Self {
-            executable_override: None,
-            expected_exe_sha256: Some(expected_sha),
+/// Validates and parses the Groq STT endpoint URL.
+/// Remote hosts strictly require `https://`; `http://` is permitted only on local loopback for tests.
+pub fn parse_groq_endpoint(endpoint: &str) -> Result<GroqEndpointTarget, SttEngineError> {
+    let trimmed = endpoint.trim();
+    let (scheme, without_scheme, default_port) = if let Some(rest) = trimmed.strip_prefix("https://") {
+        ("https".to_string(), rest, 443u16)
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        ("http".to_string(), rest, 80u16)
+    } else {
+        return Err(SttEngineError::InsecureTransport(
+            "unsupported scheme: only https:// (or loopback http://) is allowed".to_string(),
+        ));
+    };
+
+    let (host_port, path) = match without_scheme.find('/') {
+        Some(idx) => (&without_scheme[..idx], &without_scheme[idx..]),
+        None => (without_scheme, "/"),
+    };
+
+    let (host, port) = if host_port.starts_with('[') {
+        let Some(end_idx) = host_port.find(']') else {
+            return Err(SttEngineError::InvalidEndpoint("unclosed IPv6 literal".to_string()));
+        };
+        let h = &host_port[1..end_idx];
+        let after = &host_port[end_idx + 1..];
+        let p = if let Some(colon_idx) = after.find(':') {
+            after[colon_idx + 1..]
+                .parse::<u16>()
+                .map_err(|_| SttEngineError::InvalidEndpoint("invalid IPv6 port".to_string()))?
+        } else {
+            default_port
+        };
+        (h.to_string(), p)
+    } else {
+        match host_port.find(':') {
+            Some(idx) => {
+                let h = &host_port[..idx];
+                let p = host_port[idx + 1..]
+                    .parse::<u16>()
+                    .map_err(|_| SttEngineError::InvalidEndpoint("invalid port".to_string()))?;
+                (h.to_string(), p)
+            }
+            None => (host_port.to_string(), default_port),
         }
+    };
+
+    if host.trim().is_empty() || host == "0.0.0.0" || host == "::" {
+        return Err(SttEngineError::InvalidEndpoint("empty or unspecified host is forbidden".to_string()));
+    }
+    if scheme == "http" && !is_loopback_host(&host) {
+        return Err(SttEngineError::InsecureTransport(format!(
+            "remote plaintext HTTP rejected for host '{host}': HTTPS required"
+        )));
     }
 
-    pub fn with_executable_path(path: PathBuf) -> Self {
-        let mut backend = Self::new();
-        backend.executable_override = Some(path);
-        backend
-    }
-
-    pub fn verify_executable_integrity(&self, exe_path: &Path) -> Result<String, SttModelError> {
-        let raw_exe = fs::read(exe_path).map_err(|e| {
-            SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
-        })?;
-        let actual_sha = sha256_hex(&raw_exe);
-        if let Some(ref expected_sha) = self.expected_exe_sha256 {
-            if !actual_sha.eq_ignore_ascii_case(expected_sha.trim()) {
-                return Err(SttModelError::Sha256Mismatch {
-                    expected_hex: expected_sha.clone(),
-                    actual_hex: actual_sha,
-                });
-            }
-        }
-        Ok(actual_sha)
-    }
-
-    pub fn resolve_executable(&self) -> Option<PathBuf> {
-        if let Some(ref custom) = self.executable_override {
-            return custom.is_file().then(|| custom.clone());
-        }
-        if let Ok(env_bin) = std::env::var("MIKU_WHISPER_CLI_PATH") {
-            let p = PathBuf::from(env_bin);
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-        let manifest_fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|root| root.join("target").join("stt_real_fixtures"));
-        if let Some(ref dir) = manifest_fixture_dir {
-            for rel in [
-                "Release/whisper-cli.exe",
-                "whisper-cli.exe",
-                "bin/whisper-cli.exe",
-                "whisper-cli",
-            ] {
-                let cand = dir.join(rel);
-                if cand.is_file() {
-                    return Some(cand);
-                }
-            }
-        }
-        if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
-            let p = PathBuf::from(local_app)
-                .join("Miku")
-                .join("bin")
-                .join("whisper-cli.exe");
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-        if let Some(path_os) = std::env::var_os("PATH") {
-            for dir in std::env::split_paths(&path_os) {
-                for name in ["whisper-cli.exe", "whisper-cli"] {
-                    let cand = dir.join(name);
-                    if cand.is_file() {
-                        return Some(cand);
-                    }
-                }
-            }
-        }
-        None
-    }
+    Ok(GroqEndpointTarget {
+        scheme,
+        host,
+        port,
+        path: path.to_string(),
+    })
 }
 
 pub fn encode_riff_wav_pcm16_mono(pcm: &[i16], sample_rate_hz: u32) -> Vec<u8> {
@@ -124,11 +107,9 @@ pub fn encode_riff_wav_pcm16_mono(pcm: &[i16], sample_rate_hz: u32) -> Vec<u8> {
     wav
 }
 
-pub fn decode_riff_wav_pcm16_mono(raw_wav: &[u8]) -> Result<Vec<i16>, SttModelError> {
+pub fn decode_riff_wav_pcm16_mono(raw_wav: &[u8]) -> Result<Vec<i16>, SttEngineError> {
     if raw_wav.len() < 44 || &raw_wav[0..4] != b"RIFF" || &raw_wav[8..12] != b"WAVE" {
-        return Err(SttModelError::IoFailure(
-            "invalid RIFF WAVE header".to_string(),
-        ));
+        return Err(SttEngineError::IoFailure("invalid RIFF WAVE header".to_string()));
     }
     let mut pos = 12usize;
     let mut fmt_verified = false;
@@ -155,7 +136,7 @@ pub fn decode_riff_wav_pcm16_mono(raw_wav: &[u8]) -> Result<Vec<i16>, SttModelEr
             ]);
             let bits = u16::from_le_bytes([raw_wav[pos + 14], raw_wav[pos + 15]]);
             if fmt_tag != 1 || channels != 1 || rate != 16_000 || bits != 16 {
-                return Err(SttModelError::IoFailure(format!(
+                return Err(SttEngineError::IoFailure(format!(
                     "expected 16kHz mono PCM16 WAV, got tag={fmt_tag} ch={channels} rate={rate} bits={bits}"
                 )));
             }
@@ -169,49 +150,53 @@ pub fn decode_riff_wav_pcm16_mono(raw_wav: &[u8]) -> Result<Vec<i16>, SttModelEr
         }
         pos += chunk_len + (chunk_len & 1);
     }
-    Err(SttModelError::IoFailure(
-        "missing valid fmt/data chunk in WAV".to_string(),
-    ))
+    Err(SttEngineError::IoFailure("missing valid fmt/data chunk in WAV".to_string()))
 }
 
-struct EphemeralWavGuard(PathBuf, usize);
-impl Drop for EphemeralWavGuard {
-    fn drop(&mut self) {
-        if self.0.is_file() {
-            let _ = fs::write(&self.0, vec![0u8; self.1.min(65_536)]);
-            let _ = fs::remove_file(&self.0);
-        }
+/// Builds a `multipart/form-data` body for `POST /openai/v1/audio/transcriptions`
+/// wrapped in `ZeroizingBytes` so the WAV payload is zero-filled on drop.
+pub fn build_groq_multipart_body(
+    wav_bytes: &[u8],
+    config: &GroqSttConfig,
+) -> Result<ZeroizingBytes, SttEngineError> {
+    if wav_bytes.len() > MAX_STT_WAV_UPLOAD_BYTES {
+        return Err(SttEngineError::AudioPayloadTooLarge {
+            actual_bytes: wav_bytes.len(),
+            max_bytes: MAX_STT_WAV_UPLOAD_BYTES,
+        });
     }
-}
+    let mut body = Vec::with_capacity(wav_bytes.len() + 1024);
+    let mut append_field = |name: &str, value: &str| {
+        body.extend_from_slice(
+            format!("--{GROQ_MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                .as_bytes(),
+        );
+    };
 
-fn normalize_whisper_stdout(raw_stdout: &str) -> String {
-    let mut cleaned_lines = Vec::new();
-    for line in raw_stdout.lines() {
-        let mut s = line.trim();
-        if s.starts_with('[') {
-            if let Some(end_bracket) = s.find(']') {
-                let inside = &s[1..end_bracket];
-                if inside.contains("-->") {
-                    s = s[end_bracket + 1..].trim();
-                }
-            }
-        }
-        if !s.is_empty()
-            && !s.eq_ignore_ascii_case("[BLANK_AUDIO]")
-            && !s.eq_ignore_ascii_case("(blank audio)")
-        {
-            cleaned_lines.push(s);
-        }
+    append_field("model", config.model.as_str());
+    append_field("response_format", config.response_format.trim());
+    append_field("temperature", "0");
+    if let Some(lang) = config.language_hint {
+        append_field("language", lang.as_code());
     }
-    cleaned_lines.join(" ").trim().to_string()
+
+    body.extend_from_slice(
+        format!(
+            "--{GROQ_MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"utterance.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(wav_bytes);
+    body.extend_from_slice(format!("\r\n--{GROQ_MULTIPART_BOUNDARY}--\r\n").as_bytes());
+
+    Ok(ZeroizingBytes::new(body))
 }
 
 pub fn infer_language_from_text(text: &str) -> SttLanguage {
     let lower = text.to_ascii_lowercase();
     let es = [
         "ejecuta", "estado", "revisa", "abre", "compila", "pruebas", "prueba", "aprueba",
-        "cancela", "hola", "permiso", "proyecto", "archivo", "sistema", "rama", "codigo",
-        "código",
+        "cancela", "hola", "permiso", "proyecto", "archivo", "sistema", "rama", "codigo", "código",
     ];
     if es.iter().any(|w| lower.contains(w)) {
         SttLanguage::Es
@@ -220,117 +205,350 @@ pub fn infer_language_from_text(text: &str) -> SttLanguage {
     }
 }
 
-impl LocalSttDecoderBackend for WhisperCliLocalBackend {
-    fn decode_pcm16_mono(
+pub fn parse_groq_transcription_json(
+    raw_body: &[u8],
+    config: &GroqSttConfig,
+    sample_count: usize,
+    sample_rate_hz: u32,
+    active_secrets: &[&[u8]],
+) -> Result<GroqSttTranscript, SttEngineError> {
+    let parsed: serde_json::Value = serde_json::from_slice(raw_body).map_err(|e| {
+        SttEngineError::MalformedProviderResponse(redact_sensitive_voice_diagnostic_with_secrets(
+            &e.to_string(),
+            active_secrets,
+        ))
+    })?;
+
+    let text = parsed
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .ok_or_else(|| {
+            SttEngineError::MalformedProviderResponse("missing 'text' field in Groq STT JSON response".to_string())
+        })?;
+
+    if text.is_empty() {
+        return Err(SttEngineError::NoSpeechRecognized);
+    }
+
+    let language = parsed
+        .get("language")
+        .and_then(|v| v.as_str())
+        .and_then(SttLanguage::from_groq_language_field)
+        .or(config.language_hint)
+        .unwrap_or_else(|| infer_language_from_text(&text));
+
+    let duration_ms = ((sample_count as u64) * 1000) / (sample_rate_hz.max(1) as u64);
+    let billing = GroqBillingEstimate::compute(config.model, duration_ms);
+
+    Ok(GroqSttTranscript {
+        text,
+        language,
+        model: config.model,
+        sample_count,
+        duration_ms,
+        billing,
+    })
+}
+
+pub trait GroqSttTransport: Send {
+    fn transcribe_pcm16_mono(
         &mut self,
-        _weights: &VerifiedSttModelWeights,
-        model_file_path: &Path,
+        config: &GroqSttConfig,
+        api_key: &ZeroizingBytes,
         pcm: &[i16],
         sample_rate_hz: u32,
-    ) -> Result<LocalSttTranscript, SttModelError> {
-        let exe = self.resolve_executable().ok_or_else(|| {
-            SttModelError::LocalRuntimeBinaryUnavailable("whisper-cli missing on host".to_string())
-        })?;
-        let _verified_exe_sha = self.verify_executable_integrity(&exe)?;
-        let wav = encode_riff_wav_pcm16_mono(pcm, sample_rate_hz);
-        let wav_path = model_file_path.with_extension("ephemeral_ptt.wav");
-        fs::write(&wav_path, &wav).map_err(|e| {
-            SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
-        })?;
-        let _guard = EphemeralWavGuard(wav_path.clone(), wav.len());
-
-        let mut cmd = Command::new(&exe);
-        if let Some(exe_dir) = exe.parent() {
-            cmd.current_dir(exe_dir);
-        }
-        cmd.args([
-            "-m",
-            &model_file_path.to_string_lossy(),
-            "-f",
-            &wav_path.to_string_lossy(),
-            "-l",
-            "auto",
-            "-nt",
-            "-np",
-        ]);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
-        let out = cmd.output().map_err(|e| {
-            SttModelError::DecoderProcessFailed(redact_sensitive_voice_diagnostic(&e.to_string()))
-        })?;
-        if !out.status.success() {
-            return Err(SttModelError::DecoderProcessFailed(format!(
-                "status {}",
-                out.status
-            )));
-        }
-        let text = normalize_whisper_stdout(&String::from_utf8_lossy(&out.stdout));
-        if text.is_empty() {
-            return Err(SttModelError::NoSpeechRecognized);
-        }
-        let language = infer_language_from_text(&text);
-        Ok(LocalSttTranscript {
-            text,
-            language,
-            confidence: 0.92,
-            sample_count: pcm.len(),
-            duration_ms: ((pcm.len() as u64) * 1000) / (sample_rate_hz.max(1) as u64),
-        })
-    }
+    ) -> Result<GroqSttTranscript, SttEngineError>;
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct DeterministicCorpusSttBackend {
-    entries_by_pcm_sha256: BTreeMap<String, (String, SttLanguage)>,
+#[derive(Default)]
+pub struct GroqWhisperHttpClient {
+    requests_sent: u64,
+    last_billed_seconds: u64,
 }
 
-impl DeterministicCorpusSttBackend {
+impl GroqWhisperHttpClient {
     pub fn new() -> Self {
-        Self {
-            entries_by_pcm_sha256: BTreeMap::new(),
-        }
+        Self::default()
     }
-
-    pub fn register_utterance_fixture(
-        &mut self,
-        seed: u32,
-        transcript: &str,
-        language: SttLanguage,
-    ) -> Vec<i16> {
-        let mut pcm = Vec::with_capacity(6_400);
-        let mut state = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
-        for i in 0..6_400usize {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let carrier = (((i as u32).wrapping_mul(19 + (seed & 7))) % 64) as i16 - 32;
-            pcm.push(((state >> 16) as i16 % 1400) + carrier * 180);
-        }
-        self.entries_by_pcm_sha256
-            .insert(compute_pcm_sha256_hex(&pcm), (transcript.to_string(), language));
-        pcm
+    pub const fn requests_sent(&self) -> u64 {
+        self.requests_sent
+    }
+    pub const fn last_billed_seconds(&self) -> u64 {
+        self.last_billed_seconds
     }
 }
 
-impl LocalSttDecoderBackend for DeterministicCorpusSttBackend {
-    fn decode_pcm16_mono(
+impl GroqSttTransport for GroqWhisperHttpClient {
+    fn transcribe_pcm16_mono(
         &mut self,
-        _weights: &VerifiedSttModelWeights,
-        _model_file_path: &Path,
+        config: &GroqSttConfig,
+        api_key: &ZeroizingBytes,
         pcm: &[i16],
         sample_rate_hz: u32,
-    ) -> Result<LocalSttTranscript, SttModelError> {
-        let (text, lang) = self
-            .entries_by_pcm_sha256
-            .get(&compute_pcm_sha256_hex(pcm))
-            .ok_or(SttModelError::NoSpeechRecognized)?;
-        Ok(LocalSttTranscript {
-            text: text.clone(),
-            language: *lang,
-            confidence: 0.99,
-            sample_count: pcm.len(),
-            duration_ms: ((pcm.len() as u64) * 1000) / (sample_rate_hz.max(1) as u64),
-        })
+    ) -> Result<GroqSttTranscript, SttEngineError> {
+        if pcm.is_empty() {
+            return Err(SttEngineError::EmptyAudioSample);
+        }
+        let rms = (pcm.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / (pcm.len() as f64)).sqrt() as f32;
+        if rms < MIN_SPEECH_RMS_AMPLITUDE {
+            return Err(SttEngineError::SilenceOrNoSpeechDetected);
+        }
+
+        let target = parse_groq_endpoint(&config.endpoint_url)?;
+        let key_str = std::str::from_utf8(api_key.as_slice())
+            .map_err(|_| SttEngineError::InvalidSecretAlias("non-UTF8 API key".to_string()))?
+            .trim();
+        if key_str.is_empty() {
+            return Err(SttEngineError::MissingApiKeyAlias(config.api_key_alias.clone()));
+        }
+
+        let mut wav_bytes = ZeroizingBytes::new(encode_riff_wav_pcm16_mono(pcm, sample_rate_hz));
+        let multipart_body = build_groq_multipart_body(wav_bytes.as_slice(), config)?;
+        wav_bytes.zeroize_now();
+
+        self.requests_sent = self.requests_sent.saturating_add(1);
+        let active_secrets = [api_key.as_slice()];
+
+        let (status_code, resp_body) = if target.scheme == "https" {
+            send_https_multipart_post(&target, key_str, multipart_body.as_slice(), config.timeout_ms, &active_secrets)?
+        } else {
+            send_loopback_http_multipart_post(&target, key_str, multipart_body.as_slice(), config.timeout_ms, &active_secrets)?
+        };
+
+        if !(200..300).contains(&status_code) {
+            let raw_err = String::from_utf8_lossy(&resp_body);
+            return Err(SttEngineError::UpstreamHttpError {
+                status_code,
+                safe_body: redact_sensitive_voice_diagnostic_with_secrets(&raw_err, &active_secrets),
+            });
+        }
+
+        let transcript = parse_groq_transcription_json(&resp_body, config, pcm.len(), sample_rate_hz, &active_secrets)?;
+        self.last_billed_seconds = transcript.billing.billed_duration_seconds;
+        Ok(transcript)
     }
+}
+
+fn send_loopback_http_multipart_post(
+    target: &GroqEndpointTarget,
+    api_key_str: &str,
+    body: &[u8],
+    timeout_ms: u64,
+    active_secrets: &[&[u8]],
+) -> Result<(u16, Vec<u8>), SttEngineError> {
+    let sock_addr: SocketAddr = format!("{}:{}", target.host, target.port)
+        .to_socket_addrs()
+        .map_err(|e| SttEngineError::NetworkFailure(redact_sensitive_voice_diagnostic_with_secrets(&e.to_string(), active_secrets)))?
+        .next()
+        .ok_or_else(|| SttEngineError::NetworkFailure("unresolved loopback address".to_string()))?;
+
+    let dur = Duration::from_millis(timeout_ms.max(50));
+    let mut stream = TcpStream::connect_timeout(&sock_addr, dur).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock {
+            SttEngineError::NetworkTimeout("connection timed out".to_string())
+        } else {
+            SttEngineError::NetworkFailure(redact_sensitive_voice_diagnostic_with_secrets(&e.to_string(), active_secrets))
+        }
+    })?;
+    let _ = stream.set_read_timeout(Some(dur));
+    let _ = stream.set_write_timeout(Some(dur));
+
+    let mut hdr_bytes = ZeroizingBytes::new(
+        format!(
+            "POST {} HTTP/1.1\r\nHost: {}:{}\r\nAuthorization: Bearer {}\r\nContent-Type: multipart/form-data; boundary={}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            target.path, target.host, target.port, api_key_str, GROQ_MULTIPART_BOUNDARY, body.len()
+        )
+        .into_bytes(),
+    );
+
+    stream
+        .write_all(hdr_bytes.as_slice())
+        .map_err(|e| SttEngineError::NetworkFailure(redact_sensitive_voice_diagnostic_with_secrets(&e.to_string(), active_secrets)))?;
+    hdr_bytes.zeroize_now();
+
+    stream
+        .write_all(body)
+        .map_err(|e| SttEngineError::NetworkFailure(redact_sensitive_voice_diagnostic_with_secrets(&e.to_string(), active_secrets)))?;
+    let _ = stream.flush();
+
+    let mut raw_resp = Vec::new();
+    stream.read_to_end(&mut raw_resp).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock {
+            SttEngineError::NetworkTimeout("response read timed out".to_string())
+        } else {
+            SttEngineError::NetworkFailure(redact_sensitive_voice_diagnostic_with_secrets(&e.to_string(), active_secrets))
+        }
+    })?;
+
+    let Some(hdr_end) = raw_resp.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return Err(SttEngineError::MalformedProviderResponse("missing HTTP response header delimiter".to_string()));
+    };
+    let status_code = String::from_utf8_lossy(&raw_resp[..hdr_end])
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| SttEngineError::MalformedProviderResponse("invalid HTTP status code".to_string()))?;
+
+    Ok((status_code, raw_resp[hdr_end + 4..].to_vec()))
+}
+
+#[cfg(target_os = "windows")]
+fn send_https_multipart_post(
+    target: &GroqEndpointTarget,
+    api_key_str: &str,
+    body: &[u8],
+    timeout_ms: u64,
+    active_secrets: &[&[u8]],
+) -> Result<(u16, Vec<u8>), SttEngineError> {
+    use std::ffi::c_void;
+    type HINTERNET = *mut c_void;
+    type DWORD = u32;
+    type BOOL = i32;
+    type LPCWSTR = *const u16;
+    type LPVOID = *mut c_void;
+
+    const WINHTTP_ACCESS_TYPE_NO_PROXY: DWORD = 1;
+    const WINHTTP_FLAG_SECURE: DWORD = 0x00800000;
+    const WINHTTP_QUERY_STATUS_CODE: DWORD = 19;
+    const WINHTTP_QUERY_FLAG_NUMBER: DWORD = 0x20000000;
+    const ERROR_WINHTTP_TIMEOUT: DWORD = 12002;
+
+    #[link(name = "winhttp")]
+    extern "system" {
+        fn WinHttpOpen(a: LPCWSTR, t: DWORD, p: LPCWSTR, b: LPCWSTR, f: DWORD) -> HINTERNET;
+        fn WinHttpSetTimeouts(h: HINTERNET, r: i32, c: i32, s: i32, rcv: i32) -> BOOL;
+        fn WinHttpConnect(h: HINTERNET, s: LPCWSTR, p: u16, r: DWORD) -> HINTERNET;
+        fn WinHttpOpenRequest(h: HINTERNET, v: LPCWSTR, o: LPCWSTR, ver: LPCWSTR, r: LPCWSTR, a: *const LPCWSTR, f: DWORD) -> HINTERNET;
+        fn WinHttpSendRequest(h: HINTERNET, hdr: LPCWSTR, hlen: DWORD, opt: LPVOID, olen: DWORD, tlen: DWORD, ctx: usize) -> BOOL;
+        fn WinHttpReceiveResponse(h: HINTERNET, r: LPVOID) -> BOOL;
+        fn WinHttpQueryHeaders(h: HINTERNET, lvl: DWORD, n: LPCWSTR, buf: LPVOID, blen: *mut DWORD, idx: *mut DWORD) -> BOOL;
+        fn WinHttpQueryDataAvailable(h: HINTERNET, avail: *mut DWORD) -> BOOL;
+        fn WinHttpReadData(h: HINTERNET, buf: LPVOID, to_read: DWORD, read: *mut DWORD) -> BOOL;
+        fn WinHttpCloseHandle(h: HINTERNET) -> BOOL;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLastError() -> DWORD;
+    }
+    struct AutoHandle(HINTERNET);
+    impl Drop for AutoHandle {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { WinHttpCloseHandle(self.0) };
+            }
+        }
+    }
+    let to_w = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+
+    let agent_w = to_w("Miku-Voice-Groq-STT/1.0");
+    let session = AutoHandle(unsafe {
+        WinHttpOpen(agent_w.as_ptr(), WINHTTP_ACCESS_TYPE_NO_PROXY, std::ptr::null(), std::ptr::null(), 0)
+    });
+    if session.0.is_null() {
+        return Err(SttEngineError::NetworkFailure("WinHttpOpen failed".to_string()));
+    }
+    let t_i32 = (timeout_ms as i32).max(500);
+    unsafe { WinHttpSetTimeouts(session.0, t_i32, t_i32, t_i32, t_i32) };
+
+    let host_w = to_w(&target.host);
+    let conn = AutoHandle(unsafe { WinHttpConnect(session.0, host_w.as_ptr(), target.port, 0) });
+    if conn.0.is_null() {
+        return Err(SttEngineError::NetworkFailure("WinHttpConnect failed".to_string()));
+    }
+    let verb_w = to_w("POST");
+    let path_w = to_w(&target.path);
+    let req = AutoHandle(unsafe {
+        WinHttpOpenRequest(
+            conn.0,
+            verb_w.as_ptr(),
+            path_w.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            WINHTTP_FLAG_SECURE,
+        )
+    });
+    if req.0.is_null() {
+        return Err(SttEngineError::NetworkFailure("WinHttpOpenRequest failed".to_string()));
+    }
+
+    let mut hdr_w = to_w(&format!(
+        "Authorization: Bearer {}\r\nContent-Type: multipart/form-data; boundary={}\r\n",
+        api_key_str, GROQ_MULTIPART_BOUNDARY
+    ));
+    let sent = unsafe {
+        WinHttpSendRequest(
+            req.0,
+            hdr_w.as_ptr(),
+            hdr_w.len().saturating_sub(1) as DWORD,
+            body.as_ptr() as LPVOID,
+            body.len() as DWORD,
+            body.len() as DWORD,
+            0,
+        )
+    };
+    for u in hdr_w.iter_mut() {
+        unsafe { std::ptr::write_volatile(u, 0) };
+    }
+    compiler_fence(AtomicOrdering::SeqCst);
+
+    if sent == 0 {
+        let code = unsafe { GetLastError() };
+        if code == ERROR_WINHTTP_TIMEOUT {
+            return Err(SttEngineError::NetworkTimeout("WinHttpSendRequest timed out".to_string()));
+        }
+        return Err(SttEngineError::NetworkFailure(
+            redact_sensitive_voice_diagnostic_with_secrets(&format!("WinHttpSendRequest code {code}"), active_secrets),
+        ));
+    }
+    if unsafe { WinHttpReceiveResponse(req.0, std::ptr::null_mut()) } == 0 {
+        let code = unsafe { GetLastError() };
+        if code == ERROR_WINHTTP_TIMEOUT {
+            return Err(SttEngineError::NetworkTimeout("WinHttpReceiveResponse timed out".to_string()));
+        }
+        return Err(SttEngineError::NetworkFailure(format!("WinHttpReceiveResponse code {code}")));
+    }
+    let mut status_code: DWORD = 0;
+    let mut sz: DWORD = std::mem::size_of::<DWORD>() as DWORD;
+    unsafe {
+        WinHttpQueryHeaders(
+            req.0,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            std::ptr::null(),
+            &mut status_code as *mut DWORD as LPVOID,
+            &mut sz,
+            std::ptr::null_mut(),
+        );
+    }
+    let mut out = Vec::new();
+    loop {
+        let mut avail: DWORD = 0;
+        if unsafe { WinHttpQueryDataAvailable(req.0, &mut avail) } == 0 || avail == 0 {
+            break;
+        }
+        let mut chunk = vec![0u8; avail as usize];
+        let mut read: DWORD = 0;
+        if unsafe { WinHttpReadData(req.0, chunk.as_mut_ptr() as LPVOID, avail, &mut read) } == 0 {
+            break;
+        }
+        chunk.truncate(read as usize);
+        out.extend_from_slice(&chunk);
+    }
+    Ok((status_code as u16, out))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn send_https_multipart_post(
+    target: &GroqEndpointTarget,
+    _api_key_str: &str,
+    _body: &[u8],
+    _timeout_ms: u64,
+    _active_secrets: &[&[u8]],
+) -> Result<(u16, Vec<u8>), SttEngineError> {
+    Err(SttEngineError::NetworkFailure(format!(
+        "WinHTTP HTTPS transport for {} requires Windows host",
+        target.host
+    )))
 }

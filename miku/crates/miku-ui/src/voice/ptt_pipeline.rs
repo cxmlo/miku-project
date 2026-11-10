@@ -1,64 +1,53 @@
 #![allow(unused_imports)]
 use crate::prelude::*;
-use std::io::{Read, Write as IoWrite};
-use std::net::TcpStream;
+use std::sync::atomic::{compiler_fence, Ordering as AtomicOrdering};
 
 pub struct PttSttOrchestrator<C: PttAudioCaptureStream> {
     voice: VoiceInteractionController,
     capture_device: C,
-    stt_runtime: OnDemandLocalSttRuntime,
-    manifest: SttModelManifest,
-    jail: CanonicalPathJail,
-    model_file_path: PathBuf,
+    config: GroqSttConfig,
+    secret_store: Box<dyn VoiceSecretAliasStore>,
+    transport: Box<dyn GroqSttTransport>,
     session_queue: VoiceSessionOrderQueue,
+    network_requests_dispatched: u64,
+    total_billed_seconds: u64,
 }
 
 impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
     pub fn new(
         base_avatar_dir: PathBuf,
-        model_jail_root: &Path,
-        manifest: SttModelManifest,
-        ttl_ms: u64,
+        config: GroqSttConfig,
         capture_device: C,
-    ) -> Result<Self, SttModelError> {
-        Self::with_backend(
+        secret_store: Box<dyn VoiceSecretAliasStore>,
+    ) -> Result<Self, SttEngineError> {
+        Self::with_transport(
             base_avatar_dir,
-            model_jail_root,
-            manifest,
-            ttl_ms,
+            config,
             capture_device,
-            Box::new(WhisperCliLocalBackend::new()),
+            secret_store,
+            Box::new(GroqWhisperHttpClient::new()),
         )
     }
 
-    pub fn with_backend(
+    pub fn with_transport(
         base_avatar_dir: PathBuf,
-        model_jail_root: &Path,
-        manifest: SttModelManifest,
-        ttl_ms: u64,
+        config: GroqSttConfig,
         capture_device: C,
-        backend: Box<dyn LocalSttDecoderBackend>,
-    ) -> Result<Self, SttModelError> {
-        let root_str = model_jail_root.to_string_lossy().to_string();
-        let jail = CanonicalPathJail::new(&root_str)
-            .map_err(|e| SttModelError::PathJailViolation(format!("{:?}", e)))?;
-        let confined_str = jail
-            .resolve_and_confine(&manifest.model_id)
-            .map_err(|e| SttModelError::PathJailViolation(format!("{:?}", e)))?;
-        let model_file_path = PathBuf::from(confined_str);
+        secret_store: Box<dyn VoiceSecretAliasStore>,
+        transport: Box<dyn GroqSttTransport>,
+    ) -> Result<Self, SttEngineError> {
+        validate_voice_secret_alias(&config.api_key_alias)?;
+        let _ = parse_groq_endpoint(&config.endpoint_url)?;
 
         Ok(Self {
             voice: VoiceInteractionController::new_default(base_avatar_dir),
             capture_device,
-            stt_runtime: OnDemandLocalSttRuntime::with_backend(
-                ttl_ms,
-                DEFAULT_MAX_STT_MODEL_BYTES,
-                backend,
-            ),
-            manifest,
-            jail,
-            model_file_path,
+            config,
+            secret_store,
+            transport,
             session_queue: VoiceSessionOrderQueue::new(),
+            network_requests_dispatched: 0,
+            total_billed_seconds: 0,
         })
     }
 
@@ -74,8 +63,26 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         &mut self.capture_device
     }
 
-    pub fn stt_runtime(&self) -> &OnDemandLocalSttRuntime {
-        &self.stt_runtime
+    pub fn config(&self) -> &GroqSttConfig {
+        &self.config
+    }
+
+    pub fn set_cloud_audio_consent(&mut self, granted: bool) {
+        self.config.cloud_audio_consent_granted = granted;
+    }
+
+    pub fn set_endpoint_url(&mut self, endpoint_url: impl Into<String>) -> Result<(), SttEngineError> {
+        let url = endpoint_url.into();
+        let _ = parse_groq_endpoint(&url)?;
+        self.config.endpoint_url = url;
+        Ok(())
+    }
+
+    pub fn set_api_key_alias(&mut self, alias: impl Into<String>) -> Result<(), SttEngineError> {
+        let a = alias.into();
+        validate_voice_secret_alias(&a)?;
+        self.config.api_key_alias = a;
+        Ok(())
     }
 
     pub fn session_queue(&self) -> &VoiceSessionOrderQueue {
@@ -86,36 +93,12 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         self.capture_device.is_stream_open()
     }
 
-    pub fn allocated_model_bytes(&self) -> usize {
-        self.stt_runtime.allocated_weight_bytes()
+    pub const fn network_requests_dispatched(&self) -> u64 {
+        self.network_requests_dispatched
     }
 
-    pub fn model_file_path(&self) -> &Path {
-        &self.model_file_path
-    }
-
-    pub fn inspect_model_availability(&self) -> SttModelAvailability {
-        if !self.model_file_path.is_file() {
-            return SttModelAvailability::Missing {
-                download_card: self.manifest.to_download_card(),
-            };
-        }
-        let Ok(raw) = fs::read(&self.model_file_path) else {
-            return SttModelAvailability::CorruptedOnDisk {
-                download_card: self.manifest.to_download_card(),
-                reason: "failed to read model file".to_string(),
-            };
-        };
-        match verify_and_parse_stt_model_bytes(&raw, &self.manifest, DEFAULT_MAX_STT_MODEL_BYTES) {
-            Ok(_) => SttModelAvailability::VerifiedOnDisk {
-                path: self.model_file_path.clone(),
-                size_bytes: raw.len(),
-            },
-            Err(err) => SttModelAvailability::CorruptedOnDisk {
-                download_card: self.manifest.to_download_card(),
-                reason: format!("{:?}", err),
-            },
-        }
+    pub const fn total_billed_seconds(&self) -> u64 {
+        self.total_billed_seconds
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -128,7 +111,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         pill_hwnd: usize,
         gatekeeper: &mut GatekeeperEngine,
         avatar: &mut ProductionAvatarRuntime,
-    ) -> Result<(), SttModelError> {
+    ) -> Result<(), SttEngineError> {
         let verdict = gatekeeper.evaluate_request(
             "miku-voice-ptt",
             Capability::Input,
@@ -137,7 +120,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             now_ms,
         );
         if !matches!(verdict, GatekeeperVerdict::Allow { .. }) {
-            return Err(SttModelError::GatekeeperDenied(format!(
+            return Err(SttEngineError::GatekeeperDenied(format!(
                 "microphone capture denied by Gatekeeper: {:?}",
                 verdict
             )));
@@ -152,7 +135,9 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
                 pill_hwnd,
                 avatar,
             )
-            .map_err(|e| SttModelError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string())))?;
+            .map_err(|e| {
+                SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
+            })?;
 
         if let Err(err) = self
             .capture_device
@@ -165,7 +150,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
                 avatar,
                 None,
             );
-            return Err(SttModelError::UiFailure(redact_sensitive_voice_diagnostic(
+            return Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
                 &err.to_string(),
             )));
         }
@@ -178,7 +163,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         now_ms: u64,
         avatar: &mut ProductionAvatarRuntime,
         bridge: Option<&mut WebView2IpcBridge>,
-    ) -> Result<VoiceSoundwaveIndicator, SttModelError> {
+    ) -> Result<VoiceSoundwaveIndicator, SttEngineError> {
         let chunk = match self.capture_device.read_captured_pcm_chunk(max_samples) {
             Ok(c) => c,
             Err(err) => {
@@ -189,7 +174,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
                     avatar,
                     bridge,
                 );
-                return Err(SttModelError::UiFailure(redact_sensitive_voice_diagnostic(
+                return Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
                     &err.to_string(),
                 )));
             }
@@ -205,7 +190,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             Err(err) => {
                 let _ = self.capture_device.stop_and_close_stream();
                 let _ = self.voice.zero_and_reclaim();
-                Err(SttModelError::UiFailure(redact_sensitive_voice_diagnostic(
+                Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
                     &err.to_string(),
                 )))
             }
@@ -219,7 +204,8 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         gatekeeper: &mut GatekeeperEngine,
         avatar: &mut ProductionAvatarRuntime,
         bridge: &mut WebView2IpcBridge,
-    ) -> Result<PttPipelineOutcome, SttModelError> {
+    ) -> Result<PttPipelineOutcome, SttEngineError> {
+        // 1. Always close the microphone stream and zero hardware buffers BEFORE any cloud call
         let device_zero_report = self.capture_device.stop_and_close_stream();
 
         let state_after_release = match self
@@ -229,7 +215,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             Ok(s) => s,
             Err(err) => {
                 let _ = self.voice.zero_and_reclaim();
-                return Err(SttModelError::UiFailure(redact_sensitive_voice_diagnostic(
+                return Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
                     &err.to_string(),
                 )));
             }
@@ -241,64 +227,25 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         }
 
         let mut captured_pcm = self.voice.pcm_buffer().samples().to_vec();
+        let _ = self.voice.zero_and_reclaim();
 
-        if !self.model_file_path.is_file() {
-            captured_pcm.fill(0);
+        // 2. Enforce explicit cloud audio consent before reading credentials or touching network
+        if !self.config.cloud_audio_consent_granted {
+            zeroize_i16_slice(&mut captured_pcm);
             let _ = self.voice.cancel_cooperatively(
                 VoiceCancellationReason::ExplicitApiAbort,
                 now_ms,
                 avatar,
                 Some(bridge),
             );
-            return Ok(PttPipelineOutcome::ModelMissing {
-                download_card: self.manifest.to_download_card(),
-            });
+            return Err(SttEngineError::CloudAudioConsentRequired);
         }
 
-        if *self.stt_runtime.state() == SttModelLifecycleState::Unloaded {
-            let path_str = self.model_file_path.to_string_lossy().to_string();
-            let fs_verdict = gatekeeper.evaluate_request(
-                "miku-voice-stt",
-                Capability::FsRead,
-                &path_str,
-                "load_verified_stt_model",
-                now_ms,
-            );
-            if !matches!(fs_verdict, GatekeeperVerdict::Allow { .. }) {
-                captured_pcm.fill(0);
-                let _ = self.voice.cancel_cooperatively(
-                    VoiceCancellationReason::ExplicitApiAbort,
-                    now_ms,
-                    avatar,
-                    Some(bridge),
-                );
-                return Err(SttModelError::GatekeeperDenied(format!(
-                    "FsRead denied for STT model: {:?}",
-                    fs_verdict
-                )));
-            }
-
-            let raw_model = match fs::read(&self.model_file_path) {
-                Ok(b) => b,
-                Err(e) => {
-                    captured_pcm.fill(0);
-                    let _ = self.voice.cancel_cooperatively(
-                        VoiceCancellationReason::ExplicitApiAbort,
-                        now_ms,
-                        avatar,
-                        Some(bridge),
-                    );
-                    return Err(SttModelError::IoFailure(redact_sensitive_voice_diagnostic(
-                        &e.to_string(),
-                    )));
-                }
-            };
-
-            if let Err(err) =
-                self.stt_runtime
-                    .load_verified_bytes(&raw_model, &self.manifest, now_ms)
-            {
-                captured_pcm.fill(0);
+        // 3. Validate endpoint transport security and Gatekeeper Network authorization
+        let endpoint_target = match parse_groq_endpoint(&self.config.endpoint_url) {
+            Ok(t) => t,
+            Err(err) => {
+                zeroize_i16_slice(&mut captured_pcm);
                 let _ = self.voice.cancel_cooperatively(
                     VoiceCancellationReason::ExplicitApiAbort,
                     now_ms,
@@ -307,15 +254,101 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
                 );
                 return Err(err);
             }
-        }
+        };
 
-        let stt_res = self.stt_runtime.transcribe_pcm16_mono(
-            &self.model_file_path,
-            &captured_pcm,
-            VOICE_SAMPLE_RATE_HZ,
+        let net_verdict = gatekeeper.evaluate_request(
+            "miku-voice-stt",
+            Capability::Network,
+            &endpoint_target.host,
+            &self.config.endpoint_url,
             now_ms,
         );
-        captured_pcm.fill(0);
+        if !matches!(net_verdict, GatekeeperVerdict::Allow { .. }) {
+            zeroize_i16_slice(&mut captured_pcm);
+            let _ = self.voice.cancel_cooperatively(
+                VoiceCancellationReason::ExplicitApiAbort,
+                now_ms,
+                avatar,
+                Some(bridge),
+            );
+            return Err(SttEngineError::GatekeeperDenied(format!(
+                "Network access to Groq STT host '{}' denied by Gatekeeper: {:?}",
+                endpoint_target.host, net_verdict
+            )));
+        }
+
+        // 4. Authorize and retrieve API key strictly by alias
+        if let Err(err) = validate_voice_secret_alias(&self.config.api_key_alias) {
+            zeroize_i16_slice(&mut captured_pcm);
+            let _ = self.voice.cancel_cooperatively(
+                VoiceCancellationReason::ExplicitApiAbort,
+                now_ms,
+                avatar,
+                Some(bridge),
+            );
+            return Err(err);
+        }
+
+        let cred_verdict = gatekeeper.evaluate_request(
+            "secret-manager",
+            Capability::Network,
+            &self.config.api_key_alias,
+            r#"{"action":"read_credential"}"#,
+            now_ms,
+        );
+        if !matches!(cred_verdict, GatekeeperVerdict::Allow { .. }) {
+            zeroize_i16_slice(&mut captured_pcm);
+            let _ = self.voice.cancel_cooperatively(
+                VoiceCancellationReason::ExplicitApiAbort,
+                now_ms,
+                avatar,
+                Some(bridge),
+            );
+            return Err(SttEngineError::GatekeeperDenied(format!(
+                "Credential alias '{}' denied by Gatekeeper: {:?}",
+                self.config.api_key_alias, cred_verdict
+            )));
+        }
+
+        let mut api_key = match self
+            .secret_store
+            .load_secret_by_alias(&self.config.api_key_alias)
+        {
+            Ok(Some(k)) if !k.is_empty() => k,
+            Ok(_) => {
+                zeroize_i16_slice(&mut captured_pcm);
+                let _ = self.voice.cancel_cooperatively(
+                    VoiceCancellationReason::ExplicitApiAbort,
+                    now_ms,
+                    avatar,
+                    Some(bridge),
+                );
+                return Err(SttEngineError::MissingApiKeyAlias(
+                    self.config.api_key_alias.clone(),
+                ));
+            }
+            Err(err) => {
+                zeroize_i16_slice(&mut captured_pcm);
+                let _ = self.voice.cancel_cooperatively(
+                    VoiceCancellationReason::ExplicitApiAbort,
+                    now_ms,
+                    avatar,
+                    Some(bridge),
+                );
+                return Err(err);
+            }
+        };
+
+        // 5. Dispatch audio to Groq STT endpoint and immediately zeroize PCM & API key
+        self.network_requests_dispatched = self.network_requests_dispatched.saturating_add(1);
+        let stt_res = self.transport.transcribe_pcm16_mono(
+            &self.config,
+            &api_key,
+            &captured_pcm,
+            VOICE_SAMPLE_RATE_HZ,
+        );
+        zeroize_i16_slice(&mut captured_pcm);
+        api_key.zeroize_now();
 
         let transcript = match stt_res {
             Ok(t) => t,
@@ -330,10 +363,16 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             }
         };
 
+        self.total_billed_seconds = self
+            .total_billed_seconds
+            .saturating_add(transcript.billing.billed_duration_seconds);
+
         let completion_report = self
             .voice
             .complete_utterance(&transcript.text, active_session_id, avatar, bridge)
-            .map_err(|e| SttModelError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string())))?;
+            .map_err(|e| {
+                SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
+            })?;
 
         let prompt_text = match &completion_report.transcript_cell {
             WebViewIpcPayloadV1::DomSafeTextRender { safe_text, .. } => safe_text.clone(),
@@ -363,11 +402,13 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         now_ms: u64,
         avatar: &mut ProductionAvatarRuntime,
         bridge: Option<&mut WebView2IpcBridge>,
-    ) -> Result<VoiceCancelReceipt, SttModelError> {
+    ) -> Result<VoiceCancelReceipt, SttEngineError> {
         let _ = self.capture_device.stop_and_close_stream();
         self.voice
             .cancel_cooperatively(reason, now_ms, avatar, bridge)
-            .map_err(|e| SttModelError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string())))
+            .map_err(|e| {
+                SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -380,9 +421,8 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         avatar: &mut ProductionAvatarRuntime,
         audit_store: &mut PersistentJsonlAuditStore,
         bridge: &mut WebView2IpcBridge,
-    ) -> Result<KillSwitchTripReport, SttModelError> {
+    ) -> Result<KillSwitchTripReport, SttEngineError> {
         let _ = self.capture_device.stop_and_close_stream();
-        let _ = self.stt_runtime.unload_and_zero();
         let _ = self.session_queue.clear_all();
         kill_switch
             .trip(
@@ -394,148 +434,19 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
                 audit_store,
                 bridge,
             )
-            .map_err(|e| SttModelError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string())))
-    }
-
-    pub fn download_and_verify_model_explicit(
-        &mut self,
-        override_url: &str,
-        user_confirmed: bool,
-        now_ms: u64,
-        gatekeeper: &mut GatekeeperEngine,
-    ) -> Result<ModelDownloadReceipt, SttModelError> {
-        if !user_confirmed {
-            return Err(SttModelError::UserConfirmationRequired);
-        }
-
-        let target_url = if override_url.trim().is_empty() {
-            self.manifest.download_url.as_str()
-        } else {
-            override_url.trim()
-        };
-        let host_target = extract_http_host_port(target_url);
-        let net_verdict = gatekeeper.evaluate_request(
-            "miku-voice-stt",
-            Capability::Network,
-            &host_target,
-            target_url,
-            now_ms,
-        );
-        if !matches!(net_verdict, GatekeeperVerdict::Allow { .. }) {
-            return Err(SttModelError::GatekeeperDenied(format!(
-                "Network download denied by Gatekeeper: {:?}",
-                net_verdict
-            )));
-        }
-
-        let final_str = self.model_file_path.to_string_lossy().to_string();
-        let fs_verdict = gatekeeper.evaluate_request(
-            "miku-voice-stt",
-            Capability::FsWrite,
-            &final_str,
-            "write_verified_stt_model",
-            now_ms,
-        );
-        if !matches!(fs_verdict, GatekeeperVerdict::Allow { .. }) {
-            return Err(SttModelError::GatekeeperDenied(format!(
-                "FsWrite denied by Gatekeeper: {:?}",
-                fs_verdict
-            )));
-        }
-
-        let raw_bytes = fetch_http_bytes_bounded(target_url, DEFAULT_MAX_STT_MODEL_BYTES)?;
-        let part_rel = format!("{}.part", self.manifest.model_id);
-        let part_confined = self
-            .jail
-            .resolve_and_confine(&part_rel)
-            .map_err(|e| SttModelError::PathJailViolation(format!("{:?}", e)))?;
-        let part_path = PathBuf::from(part_confined);
-
-        fs::write(&part_path, &raw_bytes)
-            .map_err(|e| SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string())))?;
-
-        let verified = match verify_and_parse_stt_model_bytes(
-            &raw_bytes,
-            &self.manifest,
-            DEFAULT_MAX_STT_MODEL_BYTES,
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                zero_and_remove_part_file(&part_path, raw_bytes.len());
-                return Err(err);
-            }
-        };
-
-        if let Err(e) = fs::rename(&part_path, &self.model_file_path) {
-            zero_and_remove_part_file(&part_path, raw_bytes.len());
-            return Err(SttModelError::IoFailure(redact_sensitive_voice_diagnostic(
-                &e.to_string(),
-            )));
-        }
-
-        Ok(ModelDownloadReceipt {
-            model_id: self.manifest.model_id.clone(),
-            final_path: self.model_file_path.clone(),
-            verified_size_bytes: raw_bytes.len(),
-            verified_sha256_hex: verified.sha256_hex,
-        })
-    }
-
-    pub fn poll_inactivity_ttl(&mut self, now_ms: u64) -> bool {
-        self.stt_runtime.poll_ttl(now_ms)
+            .map_err(|e| {
+                SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
+            })
     }
 }
 
-fn zero_and_remove_part_file(path: &Path, byte_len: usize) {
-    if path.is_file() {
-        let zeros = vec![0u8; byte_len.min(256 * 1024)];
-        let _ = fs::write(path, &zeros);
-        let _ = fs::remove_file(path);
+fn zeroize_i16_slice(buf: &mut Vec<i16>) {
+    for sample in buf.iter_mut() {
+        unsafe {
+            std::ptr::write_volatile(sample, 0);
+        }
     }
-}
-
-fn extract_http_host_port(url: &str) -> String {
-    let stripped = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .unwrap_or(url);
-    stripped.split('/').next().unwrap_or(stripped).to_string()
-}
-
-fn fetch_http_bytes_bounded(url: &str, max_bytes: usize) -> Result<Vec<u8>, SttModelError> {
-    let stripped = url.strip_prefix("http://").ok_or_else(|| {
-        SttModelError::IoFailure("explicit loopback HTTP transport required".to_string())
-    })?;
-    let (host_port, path_part) = match stripped.find('/') {
-        Some(idx) => (&stripped[..idx], &stripped[idx..]),
-        None => (stripped, "/"),
-    };
-    let mut stream = TcpStream::connect(host_port)
-        .map_err(|e| SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string())))?;
-    let req = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        path_part, host_port
-    );
-    stream
-        .write_all(req.as_bytes())
-        .map_err(|e| SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string())))?;
-
-    let mut raw_resp = Vec::new();
-    stream
-        .read_to_end(&mut raw_resp)
-        .map_err(|e| SttModelError::IoFailure(redact_sensitive_voice_diagnostic(&e.to_string())))?;
-
-    let Some(hdr_end) = raw_resp.windows(4).position(|w| w == b"\r\n\r\n") else {
-        return Err(SttModelError::IoFailure(
-            "malformed HTTP response header".to_string(),
-        ));
-    };
-    let body = &raw_resp[hdr_end + 4..];
-    if body.len() > max_bytes {
-        return Err(SttModelError::SizeExceedsMaxLimit {
-            actual_bytes: body.len(),
-            max_bytes,
-        });
-    }
-    Ok(body.to_vec())
+    compiler_fence(AtomicOrdering::SeqCst);
+    buf.clear();
+    buf.shrink_to_fit();
 }

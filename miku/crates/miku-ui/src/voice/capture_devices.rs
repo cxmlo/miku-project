@@ -543,26 +543,15 @@ impl VoiceSessionOrderQueue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelDownloadReceipt {
-    pub model_id: String,
-    pub final_path: PathBuf,
-    pub verified_size_bytes: usize,
-    pub verified_sha256_hex: String,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum PttPipelineOutcome {
     TranscribedAndEnqueued {
-        transcript: LocalSttTranscript,
+        transcript: GroqSttTranscript,
         order: VoiceAgentSessionOrder,
         completion_report: VoiceUtteranceCompletionReport,
         device_zero_report: VoiceBufferZeroReport,
     },
     Cancelled {
         reason: VoiceCancellationReason,
-    },
-    ModelMissing {
-        download_card: SttModelDownloadCard,
     },
 }
