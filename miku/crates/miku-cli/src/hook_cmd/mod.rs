@@ -74,32 +74,20 @@ impl std::fmt::Display for HookInstallError {
         match self {
             HookInstallError::InvalidAgent(msg) => write!(f, "invalid agent target: {}", msg),
             HookInstallError::InvalidJsonSyntax { line, column, reason } => write!(
-                f,
-                "invalid settings.json syntax at line {}, column {}: {}",
-                line, column, reason
+                f, "invalid settings.json syntax at line {}, column {}: {}", line, column, reason
             ),
             HookInstallError::InvalidJsonRootType { line, reason } => {
                 write!(f, "invalid settings.json structure at line {}: {}", line, reason)
             }
-            HookInstallError::PathEscapeOrInvalid(msg) => {
-                write!(f, "invalid or unauthorized config path: {}", msg)
+            HookInstallError::PathEscapeOrInvalid(msg) => write!(f, "invalid or unauthorized config path: {}", msg),
+            HookInstallError::SymlinkForbidden(msg) => write!(f, "symbolic link or reparse point forbidden: {}", msg),
+            HookInstallError::GatekeeperDenied(msg) => write!(f, "Gatekeeper denied configuration access: {}", msg),
+            HookInstallError::BackupFailed(msg) => write!(f, "failed to create or verify .bak backup: {}", msg),
+            HookInstallError::InvalidBackup { line: Some(ln), reason } => {
+                write!(f, "invalid backup file at line {}: {}", ln, reason)
             }
-            HookInstallError::SymlinkForbidden(msg) => {
-                write!(f, "symbolic link or reparse point forbidden: {}", msg)
-            }
-            HookInstallError::GatekeeperDenied(msg) => {
-                write!(f, "Gatekeeper denied configuration access: {}", msg)
-            }
-            HookInstallError::BackupFailed(msg) => {
-                write!(f, "failed to create or verify .bak backup: {}", msg)
-            }
-            HookInstallError::InvalidBackup { line, reason } => match line {
-                Some(ln) => write!(f, "invalid backup file at line {}: {}", ln, reason),
-                None => write!(f, "invalid backup file: {}", reason),
-            },
-            HookInstallError::ConfirmationRejected(msg) => {
-                write!(f, "hook installation confirmation rejected: {}", msg)
-            }
+            HookInstallError::InvalidBackup { line: None, reason } => write!(f, "invalid backup file: {}", reason),
+            HookInstallError::ConfirmationRejected(msg) => write!(f, "hook installation confirmation rejected: {}", msg),
             HookInstallError::IoError(msg) => write!(f, "I/O error: {}", msg),
         }
     }
@@ -119,25 +107,27 @@ pub struct TerminalHookPrompter;
 impl HookConfirmationPrompter for TerminalHookPrompter {
     fn confirm_after_diff(&self, unified_diff: &str, backup_path: &Path) -> Result<bool, String> {
         if !io::stdin().is_terminal() {
-            return Err(
-                "miku hook install requires an interactive terminal for explicit diff confirmation; automatic non-interactive confirmation is forbidden"
-                    .to_string(),
-            );
+            return Err("miku hook install requires an interactive terminal for explicit diff confirmation; automatic non-interactive confirmation is forbidden".to_string());
         }
-
-        println!("{}", unified_diff);
-        println!("Backup created & verified: {}", backup_path.display());
+        println!("{}\nBackup created & verified: {}", unified_diff, backup_path.display());
         print!("Apply Miku hook changes to settings.json? [y/N]: ");
         let _ = io::stdout().flush();
-
         let mut answer = String::new();
-        io::stdin()
-            .read_line(&mut answer)
-            .map_err(|e| format!("failed to read confirmation from terminal: {}", e))?;
-
+        io::stdin().read_line(&mut answer).map_err(|e| format!("failed to read confirmation: {}", e))?;
         let normalized = answer.trim().to_ascii_lowercase();
         Ok(normalized == "y" || normalized == "yes")
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct HookPhaseTimings {
+    pub jail_and_gatekeeper_ms: f64,
+    pub read_and_parse_ms: f64,
+    pub merge_and_diff_ms: f64,
+    pub backup_write_verify_ms: f64,
+    pub confirmation_prompt_ms: f64,
+    pub active_write_ms: f64,
+    pub total_elapsed_ms: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +139,7 @@ pub struct HookInstallOutcome {
     pub applied: bool,
     pub idempotent_noop: bool,
     pub elapsed_ms: f64,
+    pub phase_timings: HookPhaseTimings,
     pub audit_trail: Vec<HookAuditStep>,
 }
 
@@ -169,17 +160,61 @@ fn ensure_not_symlink(path: &Path) -> Result<(), HookInstallError> {
     Ok(())
 }
 
+fn open_existing_non_symlink_rw(path: &Path) -> Result<(fs::File, Vec<u8>), HookInstallError> {
+    use std::io::Read;
+    let meta = fs::symlink_metadata(path).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            HookInstallError::PathEscapeOrInvalid(format!("settings file '{}' does not exist", path.display()))
+        } else {
+            HookInstallError::IoError(format!("failed to inspect settings.json: {}", e))
+        }
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(HookInstallError::SymlinkForbidden(path.display().to_string()));
+    }
+    let mut file = fs::OpenOptions::new().read(true).write(true).open(path)
+        .map_err(|e| HookInstallError::IoError(format!("failed to open settings.json: {}", e)))?;
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.read_to_end(&mut bytes)
+        .map_err(|e| HookInstallError::IoError(format!("failed to read settings.json: {}", e)))?;
+    Ok((file, bytes))
+}
+
+fn write_and_verify_file_bytes(path: &Path, expected_bytes: &[u8]) -> Result<(), String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)
+        .map_err(|e| format!("failed to open '{}': {}", path.display(), e))?;
+    file.write_all(expected_bytes).map_err(|e| format!("failed to write '{}': {}", path.display(), e))?;
+    file.seek(SeekFrom::Start(0)).map_err(|e| format!("failed to seek '{}': {}", path.display(), e))?;
+    let mut verified = Vec::with_capacity(expected_bytes.len());
+    file.read_to_end(&mut verified).map_err(|e| format!("failed to read back '{}': {}", path.display(), e))?;
+    if verified.as_slice() != expected_bytes {
+        return Err(format!("byte verification mismatch for '{}'", path.display()));
+    }
+    Ok(())
+}
+
+fn build_phase_timings(
+    t0: Instant, t_gk: Instant, t_parse: Instant, t_diff: Instant, t_bak: Instant, t_prompt: Instant, t_end: Instant, wrote_active: bool,
+) -> HookPhaseTimings {
+    HookPhaseTimings {
+        jail_and_gatekeeper_ms: (t_gk - t0).as_secs_f64() * 1_000.0,
+        read_and_parse_ms: (t_parse - t_gk).as_secs_f64() * 1_000.0,
+        merge_and_diff_ms: (t_diff - t_parse).as_secs_f64() * 1_000.0,
+        backup_write_verify_ms: (t_bak - t_diff).as_secs_f64() * 1_000.0,
+        confirmation_prompt_ms: (t_prompt - t_bak).as_secs_f64() * 1_000.0,
+        active_write_ms: if wrote_active { (t_end - t_prompt).as_secs_f64() * 1_000.0 } else { 0.0 },
+        total_elapsed_ms: (t_end - t0).as_secs_f64() * 1_000.0,
+    }
+}
+
 fn build_config_jail(authorized_config_root: &Path) -> Result<CanonicalPathJail, HookInstallError> {
-    ensure_not_symlink(authorized_config_root)?;
     let root_str = authorized_config_root.to_string_lossy().replace('\\', "/");
-    CanonicalPathJail::new(&root_str)
-        .map_err(|e| HookInstallError::PathEscapeOrInvalid(e.to_string()))
+    CanonicalPathJail::new(&root_str).map_err(|e| HookInstallError::PathEscapeOrInvalid(e.to_string()))
 }
 
 fn validate_confined_path_with_jail(
-    jail: &CanonicalPathJail,
-    target_path: &Path,
-    expected_ext: &str,
+    jail: &CanonicalPathJail, target_path: &Path, expected_ext: &str, check_symlink_now: bool,
 ) -> Result<(PathBuf, String), HookInstallError> {
     let target_str = target_path.to_string_lossy().replace('\\', "/");
     let canonical = jail
@@ -194,7 +229,9 @@ fn validate_confined_path_with_jail(
     }
 
     let confined_buf = PathBuf::from(&canonical);
-    ensure_not_symlink(&confined_buf)?;
+    if check_symlink_now {
+        ensure_not_symlink(&confined_buf)?;
+    }
 
     let rel = jail.relative_to_root(&canonical);
     Ok((confined_buf, rel))
@@ -279,27 +316,20 @@ pub fn install_miku_hook(
 
     let jail = build_config_jail(authorized_config_root)?;
     let (confined_settings, rel_settings) =
-        validate_confined_path_with_jail(&jail, settings_path, ".json")?;
+        validate_confined_path_with_jail(&jail, settings_path, ".json", false)?;
     let raw_bak = custom_backup_path
         .map(PathBuf::from)
         .unwrap_or_else(|| default_dated_backup_path(&confined_settings, now_ms));
     let (confined_backup, rel_backup) =
-        validate_confined_path_with_jail(&jail, &raw_bak, ".bak")?;
+        validate_confined_path_with_jail(&jail, &raw_bak, ".bak", custom_backup_path.is_some())?;
 
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsRead, &rel_settings, now_ms)?;
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsWrite, &rel_backup, now_ms)?;
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsWrite, &rel_settings, now_ms)?;
     audit_trail.push(HookAuditStep::ValidatedPathAndGatekeeper);
+    let t_after_jail_gk = Instant::now();
 
-    if !confined_settings.exists() {
-        return Err(HookInstallError::PathEscapeOrInvalid(format!(
-            "settings file '{}' does not exist",
-            confined_settings.display()
-        )));
-    }
-
-    let original_bytes = fs::read(&confined_settings)
-        .map_err(|e| HookInstallError::IoError(format!("failed to read settings.json: {}", e)))?;
+    let (mut settings_file, original_bytes) = open_existing_non_symlink_rw(&confined_settings)?;
     let original_text = std::str::from_utf8(&original_bytes)
         .map_err(|_| HookInstallError::InvalidJsonSyntax {
             line: 1,
@@ -309,36 +339,32 @@ pub fn install_miku_hook(
 
     let root_map = validate_and_parse_settings_json(original_text)?;
     audit_trail.push(HookAuditStep::ParsedExistingSettings);
+    let t_after_read_parse = Instant::now();
 
     let (merged_text, idempotent_noop) =
         merge_miku_hook_settings_from_map(root_map, original_text, agent)?;
     audit_trail.push(HookAuditStep::MergedMikuEntryOnly);
-
-    fs::write(&confined_backup, &original_bytes)
-        .map_err(|e| HookInstallError::BackupFailed(format!("failed to write backup file: {}", e)))?;
-    let verified_bak_bytes = fs::read(&confined_backup).map_err(|e| {
-        HookInstallError::BackupFailed(format!("failed to read back backup file: {}", e))
-    })?;
-    if verified_bak_bytes != original_bytes {
-        return Err(HookInstallError::BackupFailed(
-            "backup verification failed: .bak bytes do not match original settings.json".to_string(),
-        ));
-    }
-    audit_trail.push(HookAuditStep::CreatedAndValidatedBackup);
-
     let unified_diff =
         compute_unified_diff(original_text, &merged_text, "a/settings.json", "b/settings.json");
+    let t_after_merge_diff = Instant::now();
+
+    write_and_verify_file_bytes(&confined_backup, &original_bytes)
+        .map_err(HookInstallError::BackupFailed)?;
+    audit_trail.push(HookAuditStep::CreatedAndValidatedBackup);
     audit_trail.push(HookAuditStep::RenderedUnifiedDiff);
     audit_trail.push(HookAuditStep::RequestedUserConfirmation);
+    let t_after_backup = Instant::now();
 
-    let prompt_t0 = Instant::now();
     let confirmed = prompter
         .confirm_after_diff(&unified_diff, &confined_backup)
         .map_err(HookInstallError::ConfirmationRejected)?;
-    let prompt_wait = prompt_t0.elapsed();
+    let t_after_prompt = Instant::now();
 
     if !confirmed {
         audit_trail.push(HookAuditStep::CancelledWithoutModifyingActiveFile);
+        let phase_timings = build_phase_timings(
+            t0, t_after_jail_gk, t_after_read_parse, t_after_merge_diff, t_after_backup, t_after_prompt, t_after_prompt, false,
+        );
         return Ok(HookInstallOutcome {
             agent,
             settings_path: confined_settings,
@@ -346,17 +372,28 @@ pub fn install_miku_hook(
             unified_diff,
             applied: false,
             idempotent_noop,
-            elapsed_ms: t0.elapsed().saturating_sub(prompt_wait).as_secs_f64() * 1_000.0,
+            elapsed_ms: phase_timings.total_elapsed_ms,
+            phase_timings,
             audit_trail,
         });
     }
 
     if !idempotent_noop {
-        fs::write(&confined_settings, merged_text.as_bytes()).map_err(|e| {
-            HookInstallError::IoError(format!("failed to write merged settings.json: {}", e))
-        })?;
+        use std::io::{Seek, SeekFrom};
+        settings_file
+            .set_len(0)
+            .and_then(|_| settings_file.seek(SeekFrom::Start(0)))
+            .and_then(|_| settings_file.write_all(merged_text.as_bytes()))
+            .map_err(|e| {
+                HookInstallError::IoError(format!("failed to write merged settings.json: {}", e))
+            })?;
     }
+    drop(settings_file);
     audit_trail.push(HookAuditStep::WroteMergedSettings);
+    let t_end = Instant::now();
+    let phase_timings = build_phase_timings(
+        t0, t_after_jail_gk, t_after_read_parse, t_after_merge_diff, t_after_backup, t_after_prompt, t_end, true,
+    );
 
     Ok(HookInstallOutcome {
         agent,
@@ -365,7 +402,8 @@ pub fn install_miku_hook(
         unified_diff,
         applied: true,
         idempotent_noop,
-        elapsed_ms: t0.elapsed().saturating_sub(prompt_wait).as_secs_f64() * 1_000.0,
+        elapsed_ms: phase_timings.total_elapsed_ms,
+        phase_timings,
         audit_trail,
     })
 }
@@ -381,22 +419,32 @@ pub fn restore_miku_hook(
     let t0 = Instant::now();
     let jail = build_config_jail(authorized_config_root)?;
     let (confined_settings, rel_settings) =
-        validate_confined_path_with_jail(&jail, settings_path, ".json")?;
+        validate_confined_path_with_jail(&jail, settings_path, ".json", true)?;
     let resolved_bak = match backup_path {
         Some(p) => p.to_path_buf(),
         None => discover_latest_backup_for_settings(authorized_config_root, &confined_settings)?,
     };
     let (confined_backup, rel_backup) =
-        validate_confined_path_with_jail(&jail, &resolved_bak, ".bak")?;
+        validate_confined_path_with_jail(&jail, &resolved_bak, ".bak", false)?;
 
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsRead, &rel_backup, now_ms)?;
     evaluate_gatekeeper_fs(gatekeeper, Capability::FsWrite, &rel_settings, now_ms)?;
 
-    if !confined_backup.exists() {
-        return Err(HookInstallError::InvalidBackup {
-            line: None,
-            reason: format!("backup file '{}' does not exist", confined_backup.display()),
-        });
+    let bak_meta = fs::symlink_metadata(&confined_backup).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            HookInstallError::InvalidBackup {
+                line: None,
+                reason: format!("backup file '{}' does not exist", confined_backup.display()),
+            }
+        } else {
+            HookInstallError::InvalidBackup {
+                line: None,
+                reason: format!("failed to inspect backup file: {}", e),
+            }
+        }
+    })?;
+    if bak_meta.file_type().is_symlink() {
+        return Err(HookInstallError::SymlinkForbidden(confined_backup.display().to_string()));
     }
 
     let backup_bytes = fs::read(&confined_backup).map_err(|e| HookInstallError::InvalidBackup {
@@ -421,17 +469,8 @@ pub fn restore_miku_hook(
         },
     })?;
 
-    fs::write(&confined_settings, &backup_bytes)
-        .map_err(|e| HookInstallError::IoError(format!("failed to restore backup bytes: {}", e)))?;
-
-    let verify_restored = fs::read(&confined_settings).map_err(|e| {
-        HookInstallError::IoError(format!("failed to verify restored settings.json: {}", e))
-    })?;
-    if verify_restored != backup_bytes {
-        return Err(HookInstallError::IoError(
-            "post-restore byte-for-byte verification failed".to_string(),
-        ));
-    }
+    write_and_verify_file_bytes(&confined_settings, &backup_bytes)
+        .map_err(HookInstallError::IoError)?;
 
     Ok(HookRestoreOutcome {
         settings_path: confined_settings,

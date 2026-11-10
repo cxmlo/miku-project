@@ -140,8 +140,6 @@ pub fn merge_miku_hook_settings_from_map(
     raw_existing: &str,
     agent: HookTargetAgent,
 ) -> Result<(String, bool), HookInstallError> {
-    let before_map = root_map.clone();
-
     match agent {
         HookTargetAgent::ClaudeCode => {
             let hooks_val = root_map
@@ -199,11 +197,11 @@ pub fn merge_miku_hook_settings_from_map(
         }
     }
 
-    let mut merged_text = serde_json::to_string_pretty(&Value::Object(root_map.clone()))
+    let mut merged_text = serde_json::to_string_pretty(&root_map)
         .map_err(|e| HookInstallError::IoError(format!("failed to serialize merged JSON: {}", e)))?;
     merged_text.push('\n');
 
-    let idempotent_noop = (before_map == root_map) && (raw_existing == merged_text);
+    let idempotent_noop = raw_existing == merged_text;
     Ok((merged_text, idempotent_noop))
 }
 
@@ -236,14 +234,17 @@ pub fn compute_unified_diff(
 
     let n = old_lines.len();
     let m = new_lines.len();
-    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    let stride = m + 1;
+    let mut dp = vec![0usize; (n + 1) * stride];
 
     for i in (0..n).rev() {
+        let row = i * stride;
+        let next_row = (i + 1) * stride;
         for j in (0..m).rev() {
             if old_lines[i] == new_lines[j] {
-                dp[i][j] = 1 + dp[i + 1][j + 1];
+                dp[row + j] = 1 + dp[next_row + j + 1];
             } else {
-                dp[i][j] = dp[i + 1][j].max(dp[i][j + 1]);
+                dp[row + j] = dp[next_row + j].max(dp[row + j + 1]);
             }
         }
     }
@@ -256,7 +257,7 @@ pub fn compute_unified_diff(
             edits.push(DiffEdit::Equal(old_lines[i]));
             i += 1;
             j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
+        } else if dp[(i + 1) * stride + j] >= dp[i * stride + j + 1] {
             edits.push(DiffEdit::Delete(old_lines[i]));
             i += 1;
         } else {

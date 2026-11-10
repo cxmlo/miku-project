@@ -4641,6 +4641,19 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
+      version: 'Compuerta D · Optimización I/O de Handles Win32 e Instrumentación `HookPhaseTimings` en `miku-cli::hook_cmd` (`< 20.0 ms` en Ejecución Focal y Serial) · Paso 3.13 en PENDIENTE-LOCAL',
+      date: '2026-11-10',
+      gate: 'Compuerta D (Fase 3 · Pasos 3.1..3.12 VERIFICADOS [41/58 = 70.7%] · Paso 3.13 PENDIENTE-LOCAL)',
+      summary:
+        'Registrados los resultados reales de Windows 11 (`miku-agent harness::` fuera del sandbox: 12/12 passed exit 0; benchmarks de voz y kill switch: ambos aprobados; auditoría `miku-ui`: 59 archivos, máx. 538 líneas; Workspace serial: 193 passed, 0 failed, `WORKSPACE_EXIT_CODE=0`; Clippy `-D warnings`: `CLIPPY_EXIT_CODE=0`; `npm run lint`: 0 y `cockpitLogic.test.ts`: 5/5; `hook_cmd::tests::` focal: 6/7 en dos corridas donde `test_backup_created_and_validated_before_write_and_diff_shown_before_confirmation` midió `21.252 ms` y `21.141 ms` frente a `< 20.0 ms`, pasando en cambio dentro del workspace serial) y resueltas las dos causas raíz sin elevar el umbral de `20.0 ms` ni excluir trabajo real del cronómetro: (1) optimización funcional de handles Win32 en `install_miku_hook` y `restore_miku_hook` (`miku/crates/miku-cli/src/hook_cmd/mod.rs`, 587 líneas < 600): `open_existing_non_symlink_rw` abre `settings.json` una sola vez (`read(true).write(true)` sin truncar al abrir) y, solo tras validar el JSON, verificar `.bak` y obtener confirmación del usuario, trunca y escribe el JSON fusionado sobre el mismo `File` ya abierto (`set_len(0)` + `seek(0)` + `write_all`), eliminando el `CreateFileW(CREATE_ALWAYS)` post-confirmación; a su vez, `write_and_verify_file_bytes` escribe `.bak` y verifica byte por byte haciendo `seek(0)` + `read_to_end` sobre el mismo handle abierto antes de cerrarlo, evitando el bloqueo síncrono de `WdFilter.sys` (Windows Defender) al cerrar y reabrir inmediatamente un archivo recién creado en `%TEMP%`; en `merge_and_diff.rs` (299 líneas < 600) se eliminaron las 2 clonaciones profundas de `root_map` y se aplanó la matriz LCS a un único `Vec<usize>`; (2) aislamiento de contención I/O en `hook_cmd/tests.rs` (479 líneas < 600): en la corrida focal sin `--test-threads=1`, `libtest` lanzaba los 7 tests en paralelo sobre `%TEMP%` mientras que el workspace corría con `--test-threads=1` y con `%TEMP%` ya precalentado por `custom_agents_probe::tests`; se añadió `HOOK_TEST_IO_LOCK`, precalentamiento del directorio temporal en `create_temp_config_dir` e instrumentación desglosada `HookPhaseTimings` (`jail_and_gatekeeper_ms`, `read_and_parse_ms`, `merge_and_diff_ms`, `backup_write_verify_ms`, `confirmation_prompt_ms`, `active_write_ms`, `total_elapsed_ms`) midiendo el 100 % del tiempo real `t0.elapsed()`.',
+      highlights: [
+        'Causa raíz 1 (Optimización funcional Win32 en `hook_cmd/mod.rs` [587 líneas] y `merge_and_diff.rs` [299 líneas]): reducción de aperturas `CreateFileW` en `install_miku_hook` de 8 a 2 mediante `open_existing_non_symlink_rw` (lectura inicial y escritura post-confirmación sobre el mismo handle sin truncar antes de confirmar) y `write_and_verify_file_bytes` (escritura y lectura de verificación de `.bak` sobre el mismo handle sin disparar el re-escaneo post-cierre de `WdFilter.sys`), además de 0 clones de `root_map` y tabla LCS plana.',
+        'Causa raíz 2 (Diferencia entre corrida focal `hook_cmd::tests::` y `--workspace -- --test-threads=1` en `hook_cmd/tests.rs` [479 líneas]): la corrida focal ejecutaba los 7 tests en paralelo compitiendo simultáneamente por el lock NTFS de `%TEMP%` y la cola de `WdFilter.sys` en el primer test alfabético (`test_b...`); `HOOK_TEST_IO_LOCK` y el warmup en `create_temp_config_dir` eliminan la estampida de 7 hilos incluso cuando se invoca sin `--test-threads=1`.',
+        'Instrumentación transparente `HookPhaseTimings`: `outcome.elapsed_ms` mide el 100 % del tiempo real `t0.elapsed()` sin restar ninguna fase e imprime el desglose exacto de las 6 etapas.',
+        'Evidencia previa confirmada: `miku-agent harness::` 12/12 fuera del sandbox, benchmarks de voz y kill switch en verde, 59 archivos `< 600` líneas en `miku-ui` (máx. 538), Workspace serial 193/193 (`WORKSPACE_EXIT_CODE=0`) y Clippy `CLIPPY_EXIT_CODE=0`; el Paso 3.13 permanece en `PENDIENTE-LOCAL`.',
+      ],
+    },
+    {
       version: 'Compuerta D · Corrección de Causas Raíz en Verificación Local de 3.13 (`miku-agent::harness` TCP RST + Cuelgue TLS, `hook_cmd` < 20 ms y `miku-ui` Fast-Path en `set_mood`) · Paso 3.13 en PENDIENTE-LOCAL',
       date: '2026-11-09',
       gate: 'Compuerta D (Fase 3 · Pasos 3.1..3.12 VERIFICADOS [41/58 = 70.7%] · Paso 3.13 PENDIENTE-LOCAL)',
@@ -5607,29 +5620,29 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'miku/crates/miku-cli/src/hook_cmd/mod.rs',
       kind: 'file',
-      description: 'Orquestador `install_miku_hook` y `restore_miku_hook` optimizado (< 20 ms): una sola instancia de `CanonicalPathJail` (`build_config_jail`), una sola verificación `.bak` y exclusión del tiempo de espera en `prompter.confirm_after_diff` (548 líneas < 600)',
+      description: 'Orquestador `install_miku_hook` y `restore_miku_hook` con `open_existing_non_symlink_rw` (reutilización de handle RW post-confirmación), `write_and_verify_file_bytes` en handle único e instrumentación `HookPhaseTimings` sin excluir trabajo real (587 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-cli/src/hook_cmd/merge_and_diff.rs',
       kind: 'file',
-      description: 'Validador `validate_and_parse_settings_json`, fusión directa `merge_miku_hook_settings_from_map` sin segundo parseo JSON y motor de diff unificado LCS `compute_unified_diff` (298 líneas < 600)',
+      description: 'Validador `validate_and_parse_settings_json`, fusión directa `merge_miku_hook_settings_from_map` con 0 clones de `root_map` y motor de diff unificado LCS con matriz plana `Vec<usize>` (299 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-cli/src/hook_cmd/tests.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 3.13 (`LEDGER-3.13-1..7`) en PENDIENTE-LOCAL + auditoría de modularidad < 600 líneas (440 líneas < 600)',
-      deliveredInCurrentTurn: false,
+      description: 'Suite TDD del Paso 3.13 (`LEDGER-3.13-1..7`) en PENDIENTE-LOCAL con `HOOK_TEST_IO_LOCK`, precalentamiento de directorio temporal, trazas `HOOK_INSTALL_TIMINGS_MS` y auditoría < 600 líneas (479 líneas < 600)',
+      deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-agent/src/harness/providers.rs',
       kind: 'file',
-      description: 'Adaptadores HTTP/HTTPS del arnés (`send_loopback_http_post` actualizado con escritura atómica única `request_buf` y lector determinista por `Content-Length` · 582 líneas < 600)',
-      deliveredInCurrentTurn: true,
+      description: 'Adaptadores HTTP/HTTPS del arnés (`send_loopback_http_post` actualizado con escritura atómica única `request_buf` y lector determinista por `Content-Length` · 582 líneas < 600 · 12/12 tests verdes en Windows 11)',
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {

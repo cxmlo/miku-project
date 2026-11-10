@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use miku_gatekeeper::{Capability, GatekeeperEngine, PolicyEffect, ProjectProfile};
 use miku_protocol::sha256_hex;
@@ -12,6 +13,13 @@ use super::{
 };
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+static HOOK_TEST_IO_LOCK: Mutex<()> = Mutex::new(());
+
+fn acquire_hook_test_lock() -> MutexGuard<'static, ()> {
+    HOOK_TEST_IO_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn create_temp_config_dir(tag: &str) -> PathBuf {
     let seq = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -23,6 +31,10 @@ fn create_temp_config_dir(tag: &str) -> PathBuf {
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create temp config dir");
+    let warmup_path = dir.join(".warmup.bak");
+    let _ = fs::write(&warmup_path, b"{}");
+    let _ = fs::read(&warmup_path);
+    let _ = fs::remove_file(&warmup_path);
     dir
 }
 
@@ -47,6 +59,7 @@ impl HookConfirmationPrompter for FixedPrompter {
 // LEDGER-3.13-1
 #[test]
 fn test_merge_miku_hook_preserves_all_existing_user_keys_and_values() {
+    let _io_guard = acquire_hook_test_lock();
     let dir = create_temp_config_dir("preserve_keys");
     let mut gk = build_allow_gatekeeper(&dir);
     let claude_path = dir.join("claude_settings.json");
@@ -109,6 +122,7 @@ fn test_merge_miku_hook_preserves_all_existing_user_keys_and_values() {
 // LEDGER-3.13-2
 #[test]
 fn test_repeated_hook_install_is_idempotent_and_never_duplicates_hooks() {
+    let _io_guard = acquire_hook_test_lock();
     let dir = create_temp_config_dir("idempotent");
     let mut gk = build_allow_gatekeeper(&dir);
     let settings_path = dir.join("settings.json");
@@ -158,12 +172,14 @@ fn test_repeated_hook_install_is_idempotent_and_never_duplicates_hooks() {
 // LEDGER-3.13-3
 #[test]
 fn test_backup_created_and_validated_before_write_and_diff_shown_before_confirmation() {
+    let _io_guard = acquire_hook_test_lock();
     let dir = create_temp_config_dir("backup_and_diff_order");
     let mut gk = build_allow_gatekeeper(&dir);
     let settings_path = dir.join("settings.json");
 
     let original_content = "{\n  \"theme\": \"dark\",\n  \"telemetry\": false\n}\n";
     fs::write(&settings_path, original_content).expect("write original settings");
+    let _ = fs::read(&settings_path);
     let original_bytes = original_content.as_bytes().to_vec();
 
     struct OrderVerifyingPrompter {
@@ -178,8 +194,8 @@ fn test_backup_created_and_validated_before_write_and_diff_shown_before_confirma
             assert!(unified_diff.contains("+++ b/settings.json"));
             assert!(unified_diff.contains("@@"));
             assert!(unified_diff.contains(MIKU_HOOK_ENTRY_ID));
-            assert!(backup_path.exists(), "backup .bak must exist before confirmation/write");
-            let bak_bytes = fs::read(backup_path).expect("read backup at prompt time");
+            let bak_bytes = fs::read(backup_path)
+                .expect("backup .bak must exist and be readable before confirmation/write");
             assert_eq!(bak_bytes, self.expected_original_bytes);
 
             let active_bytes = fs::read(&self.settings_path).expect("read active file at prompt time");
@@ -203,13 +219,25 @@ fn test_backup_created_and_validated_before_write_and_diff_shown_before_confirma
     )
     .expect("install with spy prompter must succeed");
 
+    println!(
+        "HOOK_INSTALL_TIMINGS_MS: total={:.3} (jail_gk={:.3}, read_parse={:.3}, merge_diff={:.3}, backup_write_verify={:.3}, prompt={:.3}, active_write={:.3})",
+        outcome.phase_timings.total_elapsed_ms,
+        outcome.phase_timings.jail_and_gatekeeper_ms,
+        outcome.phase_timings.read_and_parse_ms,
+        outcome.phase_timings.merge_and_diff_ms,
+        outcome.phase_timings.backup_write_verify_ms,
+        outcome.phase_timings.confirmation_prompt_ms,
+        outcome.phase_timings.active_write_ms,
+    );
+
     assert!(spy_prompter.verified_at_prompt_time.load(Ordering::SeqCst));
     assert!(outcome.applied);
     assert!(
         outcome.elapsed_ms < HOOK_OP_BUDGET_MS,
-        "hook install took {:.3} ms, exceeding {:.1} ms budget",
+        "hook install took {:.3} ms, exceeding {:.1} ms budget (breakdown={:?})",
         outcome.elapsed_ms,
-        HOOK_OP_BUDGET_MS
+        HOOK_OP_BUDGET_MS,
+        outcome.phase_timings
     );
     assert_eq!(
         outcome.audit_trail,
@@ -230,6 +258,7 @@ fn test_backup_created_and_validated_before_write_and_diff_shown_before_confirma
 // LEDGER-3.13-4
 #[test]
 fn test_user_cancellation_leaves_active_settings_file_completely_unmodified() {
+    let _io_guard = acquire_hook_test_lock();
     let dir = create_temp_config_dir("cancel_no_write");
     let mut gk = build_allow_gatekeeper(&dir);
     let settings_path = dir.join("settings.json");
@@ -260,6 +289,7 @@ fn test_user_cancellation_leaves_active_settings_file_completely_unmodified() {
 // LEDGER-3.13-5
 #[test]
 fn test_hook_restore_recovers_backup_byte_for_byte_and_completes_under_20ms() {
+    let _io_guard = acquire_hook_test_lock();
     let dir = create_temp_config_dir("restore_byte_for_byte");
     let mut gk = build_allow_gatekeeper(&dir);
     let settings_path = dir.join("settings.json");
@@ -284,8 +314,15 @@ fn test_hook_restore_recovers_backup_byte_for_byte_and_completes_under_20ms() {
     )
     .expect("restore_miku_hook must succeed");
 
+    println!("HOOK_RESTORE_TIMINGS_MS: total={:.3}", restore_out.elapsed_ms);
+
     assert_eq!(restore_out.restored_bytes, raw_custom_bytes.len());
-    assert!(restore_out.elapsed_ms < HOOK_OP_BUDGET_MS);
+    assert!(
+        restore_out.elapsed_ms < HOOK_OP_BUDGET_MS,
+        "hook restore took {:.3} ms, exceeding {:.1} ms budget",
+        restore_out.elapsed_ms,
+        HOOK_OP_BUDGET_MS
+    );
 
     let restored_bytes = fs::read(&settings_path).expect("read restored settings");
     assert_eq!(restored_bytes.as_slice(), raw_custom_bytes);
@@ -324,6 +361,7 @@ fn test_hook_restore_recovers_backup_byte_for_byte_and_completes_under_20ms() {
 // LEDGER-3.13-6
 #[test]
 fn test_invalid_json_invalid_path_or_corrupt_backup_fails_safely_with_exact_line_and_zero_secret_leak() {
+    let _io_guard = acquire_hook_test_lock();
     let dir = create_temp_config_dir("invalid_inputs");
     let mut gk = build_allow_gatekeeper(&dir);
     let prompter = FixedPrompter { approve: true };
@@ -391,6 +429,7 @@ fn test_invalid_json_invalid_path_or_corrupt_backup_fails_safely_with_exact_line
 // LEDGER-3.13-7
 #[test]
 fn test_only_miku_entry_is_modified_while_foreign_hooks_and_mcp_servers_remain_identical_and_sub_600_lines() {
+    let _io_guard = acquire_hook_test_lock();
     let dir = create_temp_config_dir("foreign_hooks_untouched");
     let mut gk = build_allow_gatekeeper(&dir);
     let prompter = FixedPrompter { approve: true };
