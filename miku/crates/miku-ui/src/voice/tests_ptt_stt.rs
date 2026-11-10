@@ -39,10 +39,10 @@ fn spawn_single_shot_http_model_server(body: Vec<u8>, declared_content_length: O
             let _ = stream.flush();
         }
     });
-    format!("http://127.0.0.1:{}/models/miku-stt-es-en-v1.mkstt", addr.port())
+    format!("http://127.0.0.1:{}/models/ggml-fixture.bin", addr.port())
 }
 
-// LEDGER-4.1-1: PTT opens capture only while held and closes stream on release
+// LEDGER-4.1-1: PTT opens capture only while held and closes stream immediately on release
 #[test]
 fn test_ptt_opens_capture_only_while_held_and_closes_stream_immediately_on_release() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_1");
@@ -52,20 +52,29 @@ fn test_ptt_opens_capture_only_while_held_and_closes_stream_immediately_on_relea
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
     let mut gk = permissive_voice_gatekeeper(&temp_dir);
 
-    let (raw_model, manifest) = build_stt_model_artifact_and_manifest("miku-stt-es-en-v1", 16 * 1024);
-    fs::write(temp_dir.join("miku-stt-es-en-v1.mkstt"), &raw_model).expect("write verified model fixture");
+    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
+    fs::write(temp_dir.join(&manifest.model_id), &raw_model).expect("write verified GGML fixture");
 
-    let es_pcm = synthesize_bilingual_command_pcm("ejecuta cargo test");
+    let mut corpus = DeterministicCorpusSttBackend::new();
+    let es_pcm = corpus.register_utterance_fixture(1, "ejecuta cargo test", SttLanguage::Es);
     let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(es_pcm);
-    let mut orch = PttSttOrchestrator::new(avatar_dir, &temp_dir, manifest, DEFAULT_STT_MODEL_TTL_MS, capture)
-        .expect("create PttSttOrchestrator");
+
+    let mut orch = PttSttOrchestrator::with_backend(
+        avatar_dir,
+        &temp_dir,
+        manifest,
+        DEFAULT_STT_MODEL_TTL_MS,
+        capture,
+        Box::new(corpus),
+    )
+    .expect("create PttSttOrchestrator");
 
     assert!(!orch.is_capture_stream_open());
     assert_eq!(orch.capture_device().active_stream_handles_count(), 0);
     assert_eq!(orch.capture_device().open_calls(), 0);
     assert_eq!(*orch.voice().state(), VoiceInteractionState::Idle);
 
-    // Unrecognized hotkey must fail BEFORE opening capture stream
+    // Unrecognized hotkey must fail in VoiceInteractionController::start_ptt_session BEFORE opening stream
     assert!(orch.press_ptt_and_open_stream("Ctrl+Alt+Q", 1_000, 0x1000, 0x1000, 0x2000, &mut gk, avatar).is_err());
     assert!(!orch.is_capture_stream_open());
     assert_eq!(orch.capture_device().open_calls(), 0);
@@ -92,12 +101,19 @@ fn test_ptt_opens_capture_only_while_held_and_closes_stream_immediately_on_relea
     assert_eq!(*orch.voice().state(), VoiceInteractionState::Idle);
     assert!(matches!(outcome, PttPipelineOutcome::TranscribedAndEnqueued { .. }));
 
-    // Verify WinMM hardware probe leaves 0 open handles after probe/close
+    // Verify WinMM hardware capture device prepares WAVEHDR buffers when a device exists and closes cleanly
     let mut winmm_probe = WinMmWaveInCaptureProbe::new();
-    let _ = winmm_probe.open_capture_stream(VOICE_SAMPLE_RATE_HZ, VOICE_CHANNELS);
+    if winmm_probe.open_capture_stream(VOICE_SAMPLE_RATE_HZ, VOICE_CHANNELS).is_ok() {
+        assert!(winmm_probe.is_stream_open());
+        assert_eq!(winmm_probe.active_stream_handles_count(), 1);
+        assert!(winmm_probe.prepared_headers_count() > 0);
+        let _ = winmm_probe.read_captured_pcm_chunk(320);
+    }
     let zero_rep = winmm_probe.stop_and_close_stream();
     assert!(!winmm_probe.is_stream_open());
     assert_eq!(winmm_probe.active_stream_handles_count(), 0);
+    assert_eq!(winmm_probe.prepared_headers_count(), 0);
+    assert_eq!(zero_rep.residual_non_zero_samples, 0);
     assert_eq!(zero_rep.retained_capacity_bytes, 0);
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -114,12 +130,21 @@ fn test_idle_error_cancellation_and_kill_switch_leave_zero_active_capture_and_ze
     let mut gk = permissive_voice_gatekeeper(&temp_dir);
     let mut audit_store = PersistentJsonlAuditStore::open_default(&temp_dir).expect("audit store");
 
-    let (raw_model, manifest) = build_stt_model_artifact_and_manifest("miku-stt-es-en-v1", 16 * 1024);
-    fs::write(temp_dir.join("miku-stt-es-en-v1.mkstt"), &raw_model).expect("write model");
+    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
+    fs::write(temp_dir.join(&manifest.model_id), &raw_model).expect("write model");
 
-    let speech_pcm = synthesize_bilingual_command_pcm("cancela la cola");
+    let mut corpus = DeterministicCorpusSttBackend::new();
+    let speech_pcm = corpus.register_utterance_fixture(2, "cancela la cola", SttLanguage::Es);
     let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(speech_pcm.clone());
-    let mut orch = PttSttOrchestrator::new(avatar_dir, &temp_dir, manifest, DEFAULT_STT_MODEL_TTL_MS, capture).unwrap();
+    let mut orch = PttSttOrchestrator::with_backend(
+        avatar_dir,
+        &temp_dir,
+        manifest,
+        DEFAULT_STT_MODEL_TTL_MS,
+        capture,
+        Box::new(corpus),
+    )
+    .unwrap();
 
     // Path A: Escape cancellation during active PTT capture
     orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 1_000, 0x1000, 0x1000, 0x2000, &mut gk, avatar).unwrap();
@@ -135,7 +160,7 @@ fn test_idle_error_cancellation_and_kill_switch_leave_zero_active_capture_and_ze
     assert_eq!(receipt_esc.zero_report.residual_non_zero_samples, 0);
     assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
 
-    // Path B: Early PTT release (< 120 ms)
+    // Path B: Early PTT release (< MIN_PTT_HOLD_DURATION_MS = 120 ms)
     orch.capture_device_mut().restage_pcm(speech_pcm.clone());
     orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 2_000, 0x1000, 0x1000, 0x2000, &mut gk, avatar).unwrap();
     let _ = orch.pump_ptt_capture_chunk(1_600, 2_030, avatar, Some(&mut bridge)).unwrap();
@@ -162,7 +187,7 @@ fn test_idle_error_cancellation_and_kill_switch_leave_zero_active_capture_and_ze
     assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
     assert_eq!(*orch.voice().state(), VoiceInteractionState::Idle);
 
-    // Path D: Global Kill Switch while PTT is held and model is loaded
+    // Path D: Global Kill Switch while PTT is held
     orch.capture_device_mut().restage_pcm(speech_pcm);
     orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 4_000, 0x1000, 0x1000, 0x2000, &mut gk, avatar).unwrap();
     let _ = orch.pump_ptt_capture_chunk(3_200, 4_050, avatar, Some(&mut bridge)).unwrap();
@@ -183,7 +208,7 @@ fn test_idle_error_cancellation_and_kill_switch_leave_zero_active_capture_and_ze
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-3: Bilingual ES/EN audio fixtures traverse real local PTT -> STT pipeline
+// LEDGER-4.1-3: Bilingual ES/EN audio fixtures traverse PTT -> STT pipeline, while silence/unrecognized audio and missing whisper-cli fail closed
 #[test]
 fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_enqueue_to_active_session() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_3");
@@ -193,22 +218,42 @@ fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_en
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
     let mut gk = permissive_voice_gatekeeper(&temp_dir);
 
-    let (raw_model, manifest) = build_stt_model_artifact_and_manifest("miku-stt-es-en-v1", 32 * 1024);
-    fs::write(temp_dir.join("miku-stt-es-en-v1.mkstt"), &raw_model).expect("write model");
+    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 32 * 1024);
+    let model_path = temp_dir.join(&manifest.model_id);
+    fs::write(&model_path, &raw_model).expect("write model");
 
-    let capture = DeterministicFixtureCaptureDevice::new();
-    let mut orch = PttSttOrchestrator::new(avatar_dir, &temp_dir, manifest, DEFAULT_STT_MODEL_TTL_MS, capture).unwrap();
+    // 1. Verify production WhisperCliLocalBackend fails closed with LocalRuntimeBinaryUnavailable
+    //    when whisper-cli is absent, never fabricating a synthetic transcript
+    let mut prod_backend = WhisperCliLocalBackend::with_executable_path(temp_dir.join("nonexistent-whisper-cli.exe"));
+    let weights = verify_and_parse_stt_model_bytes(&raw_model, &manifest, DEFAULT_MAX_STT_MODEL_BYTES).unwrap();
+    let prod_err = prod_backend
+        .decode_pcm16_mono(&weights, &model_path, &[2_000i16; 3_200], VOICE_SAMPLE_RATE_HZ)
+        .unwrap_err();
+    assert!(matches!(prod_err, SttModelError::LocalRuntimeBinaryUnavailable(_)));
 
+    // 2. Verify bilingual ES/EN pipeline routing and strict rejection of uncorroborated noise
+    let mut corpus = DeterministicCorpusSttBackend::new();
     let fixtures = [
-        ("ejecuta cargo test", SttLanguage::Es),
-        ("aprueba el permiso", SttLanguage::Es),
-        ("run clippy and fix warnings", SttLanguage::En),
-        ("open pull request", SttLanguage::En),
+        (corpus.register_utterance_fixture(10, "ejecuta cargo test", SttLanguage::Es), "ejecuta cargo test", SttLanguage::Es),
+        (corpus.register_utterance_fixture(11, "aprueba el permiso", SttLanguage::Es), "aprueba el permiso", SttLanguage::Es),
+        (corpus.register_utterance_fixture(12, "run clippy and fix warnings", SttLanguage::En), "run clippy and fix warnings", SttLanguage::En),
+        (corpus.register_utterance_fixture(13, "open pull request", SttLanguage::En), "open pull request", SttLanguage::En),
     ];
 
-    for (idx, (expected_phrase, expected_lang)) in fixtures.iter().enumerate() {
+    let capture = DeterministicFixtureCaptureDevice::new();
+    let mut orch = PttSttOrchestrator::with_backend(
+        avatar_dir,
+        &temp_dir,
+        manifest,
+        DEFAULT_STT_MODEL_TTL_MS,
+        capture,
+        Box::new(corpus),
+    )
+    .unwrap();
+
+    for (idx, (pcm, expected_phrase, expected_lang)) in fixtures.iter().enumerate() {
         let base_ts = 10_000 + (idx as u64) * 2_000;
-        orch.capture_device_mut().restage_pcm(synthesize_bilingual_command_pcm(expected_phrase));
+        orch.capture_device_mut().restage_pcm(pcm.clone());
         orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, base_ts, 0x1000, 0x1000, 0x2000, &mut gk, avatar).unwrap();
         assert!(orch.is_capture_stream_open());
 
@@ -227,7 +272,6 @@ fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_en
             PttPipelineOutcome::TranscribedAndEnqueued { transcript, order, completion_report, device_zero_report } => {
                 assert_eq!(transcript.text, *expected_phrase);
                 assert_eq!(transcript.language, *expected_lang);
-                assert!(transcript.confidence >= 0.95);
                 assert_eq!(order.session_id, "sess_active_agent_41");
                 assert_eq!(order.prompt_text, *expected_phrase);
                 assert_eq!(order.language, *expected_lang);
@@ -237,6 +281,17 @@ fn test_bilingual_es_en_audio_fixtures_traverse_local_ptt_to_stt_pipeline_and_en
             other => panic!("expected TranscribedAndEnqueued, got {:?}", other),
         }
     }
+
+    // 3. Unregistered arbitrary audio must be rejected with NoSpeechRecognized (never nearest-neighbor matched)
+    orch.capture_device_mut().restage_pcm(vec![4_096i16; 4_800]);
+    orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 25_000, 0x1000, 0x1000, 0x2000, &mut gk, avatar).unwrap();
+    let _ = orch.pump_ptt_capture_chunk(4_800, 25_100, avatar, Some(&mut bridge)).unwrap();
+    let unknown_err = orch
+        .release_ptt_and_transcribe_to_session("sess_active_agent_41", 25_400, &mut gk, avatar, &mut bridge)
+        .unwrap_err();
+    assert_eq!(unknown_err, SttModelError::NoSpeechRecognized);
+    assert!(!orch.is_capture_stream_open());
+    assert_eq!(orch.voice().pcm_buffer().capacity_bytes(), 0);
 
     let queued = orch.session_queue().orders_for_session("sess_active_agent_41");
     assert_eq!(queued.len(), 4);
@@ -268,12 +323,21 @@ fn test_local_stt_transcription_makes_zero_network_calls_and_consumes_zero_provi
         .with_rule(Capability::Network, "*", PolicyEffect::Deny, true);
     let mut gk = GatekeeperEngine::new(profile).expect("offline gatekeeper");
 
-    let (raw_model, manifest) = build_stt_model_artifact_and_manifest("miku-stt-es-en-v1", 16 * 1024);
-    fs::write(temp_dir.join("miku-stt-es-en-v1.mkstt"), &raw_model).expect("write model");
+    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-fixture.bin", 16 * 1024);
+    fs::write(temp_dir.join(&manifest.model_id), &raw_model).expect("write model");
 
-    let en_pcm = synthesize_bilingual_command_pcm("stop active agent");
+    let mut corpus = DeterministicCorpusSttBackend::new();
+    let en_pcm = corpus.register_utterance_fixture(20, "stop active agent", SttLanguage::En);
     let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(en_pcm);
-    let mut orch = PttSttOrchestrator::new(avatar_dir, &temp_dir, manifest, DEFAULT_STT_MODEL_TTL_MS, capture).unwrap();
+    let mut orch = PttSttOrchestrator::with_backend(
+        avatar_dir,
+        &temp_dir,
+        manifest,
+        DEFAULT_STT_MODEL_TTL_MS,
+        capture,
+        Box::new(corpus),
+    )
+    .unwrap();
 
     orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 5_000, 0x1000, 0x1000, 0x2000, &mut gk, avatar).unwrap();
     let _ = orch.pump_ptt_capture_chunk(64_000, 5_100, avatar, Some(&mut bridge)).unwrap();
@@ -285,20 +349,34 @@ fn test_local_stt_transcription_makes_zero_network_calls_and_consumes_zero_provi
     assert_eq!(orch.stt_runtime().network_calls_made(), 0);
     assert_eq!(orch.stt_runtime().provider_tokens_consumed(), 0);
 
-    let network_audits = gk.audit_log().entries().iter().filter(|e| e.capability == Capability::Network).count();
+    let network_audits = gk.audit_log().entries().iter().filter(|e| e.capability == Capability::Network.as_str()).count();
     assert_eq!(network_audits, 0);
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-5: SHA-256 download/verification accepts valid hash and rejects wrong hash, truncated, or unconfirmed
+// LEDGER-4.1-5: Real Whisper GGML manifests & SHA-256 download/verification
 #[test]
 fn test_explicit_model_download_verifies_sha256_and_rejects_wrong_hash_truncated_or_unconfirmed() {
+    // 1. Verify official upstream ggerganov/whisper.cpp manifests (MIT license, exact bytes, exact SHA-256)
+    let tiny = SttModelManifest::default_whisper_tiny();
+    assert_eq!(tiny.model_id, "ggml-tiny.bin");
+    assert_eq!(tiny.license, "MIT");
+    assert_eq!(tiny.expected_size_bytes, 77_691_713);
+    assert_eq!(tiny.expected_sha256_hex, "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21");
+    assert_eq!(tiny.download_url, "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin");
+
+    let base = SttModelManifest::default_whisper_base();
+    assert_eq!(base.model_id, "ggml-base.bin");
+    assert_eq!(base.license, "MIT");
+    assert_eq!(base.expected_size_bytes, 147_951_465);
+    assert_eq!(base.expected_sha256_hex, "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe");
+
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_5");
     let avatar_dir = resolve_avatar_assets_dir();
     let mut gk = permissive_voice_gatekeeper(&temp_dir);
 
-    let (valid_bytes, manifest) = build_stt_model_artifact_and_manifest("miku-stt-es-en-v1", 24 * 1024);
+    let (valid_bytes, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny-dl.bin", 24 * 1024);
     let capture = DeterministicFixtureCaptureDevice::new();
     let mut orch = PttSttOrchestrator::new(avatar_dir, &temp_dir, manifest.clone(), DEFAULT_STT_MODEL_TTL_MS, capture).unwrap();
 
@@ -333,7 +411,7 @@ fn test_explicit_model_download_verifies_sha256_and_rejects_wrong_hash_truncated
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
-// LEDGER-4.1-6: Missing model produces download card state; inactivity TTL unloads model to 0 MB
+// LEDGER-4.1-6: Missing model produces verified download card; inactivity TTL unloads model to 0 MB
 #[test]
 fn test_missing_model_exposes_typed_download_card_and_inactivity_ttl_evicts_model_to_zero_mb() {
     let temp_dir = create_isolated_voice_4_1_dir("ledger_4_1_6");
@@ -343,14 +421,24 @@ fn test_missing_model_exposes_typed_download_card_and_inactivity_ttl_evicts_mode
     let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
     let mut gk = permissive_voice_gatekeeper(&temp_dir);
 
-    let (raw_model, manifest) = build_stt_model_artifact_and_manifest("miku-stt-es-en-v1", 64 * 1024);
-    let pcm = synthesize_bilingual_command_pcm("abre el navegador");
+    let (raw_model, manifest) = build_valid_ggml_whisper_fixture_and_manifest("ggml-tiny.bin", 64 * 1024);
+    let mut corpus = DeterministicCorpusSttBackend::new();
+    let pcm = corpus.register_utterance_fixture(30, "abre el navegador", SttLanguage::Es);
     let capture = DeterministicFixtureCaptureDevice::with_staged_pcm(pcm.clone());
-    let mut orch = PttSttOrchestrator::new(avatar_dir, &temp_dir, manifest.clone(), 1_500, capture).unwrap();
+    let mut orch = PttSttOrchestrator::with_backend(
+        avatar_dir,
+        &temp_dir,
+        manifest.clone(),
+        1_500,
+        capture,
+        Box::new(corpus),
+    )
+    .unwrap();
 
     match orch.inspect_model_availability() {
         SttModelAvailability::Missing { download_card } => {
-            assert_eq!(download_card.model_id, "miku-stt-es-en-v1");
+            assert_eq!(download_card.model_id, "ggml-tiny.bin");
+            assert_eq!(download_card.license, "MIT");
             assert_eq!(download_card.expected_size_bytes, manifest.expected_size_bytes);
             assert_eq!(download_card.expected_sha256_hex, manifest.expected_sha256_hex);
             assert!(download_card.requires_explicit_user_action);

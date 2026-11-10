@@ -4126,7 +4126,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que en reposo el stream de micrófono está cerrado (`0` handles activos), que un atajo no válido falla antes de abrir el dispositivo, que `Alt+Space` abre la captura mientras se mantiene pulsado y que al soltar la tecla se detiene y cierra el stream inmediatamente (tanto en `DeterministicFixtureCaptureDevice` como en la sonda Win32 `WinMmWaveInCaptureProbe`).',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que en reposo el stream de micrófono está cerrado (`0` handles activos), que un atajo no válido falla antes de abrir el dispositivo, que `Alt+Space` abre la captura mientras se mantiene pulsado, que `WinMmWaveInCaptureProbe` prepara y encola buffers `WAVEHDR` (`prepared_headers_count() > 0`) e inicia `waveInStart`, y que al soltar la tecla se ejecuta `waveInStop -> waveInReset -> waveInUnprepareHeader -> zero-fill -> waveInClose` dejando `0` headers y `0` muestras residuales.',
     },
     {
       id: 'LEDGER-4.1-2',
@@ -4137,7 +4137,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que en cancelación por `Escape`, liberación temprana (`< 120 ms`), fallo de lectura del micrófono a mitad de trama y disparo del Kill Switch Global (`trip_kill_switch_and_purge`), el stream se cierra inmediatamente, los buffers PCM del dispositivo y del controlador se sobrescriben con `0` (`capacity_bytes() == 0`), el modelo STT se descarga (`0 B`) y la cola de órdenes queda vacía.',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que en cancelación por `Escape`, liberación temprana (`< MIN_PTT_HOLD_DURATION_MS = 120 ms`), fallo de lectura del micrófono a mitad de trama y disparo del Kill Switch Global (`UiKillSwitchManager::trip`), el stream se cierra inmediatamente, los buffers PCM del dispositivo y del controlador se sobrescriben con `0` (`capacity_bytes() == 0`), el modelo STT se descarga (`0 B`) y la cola de órdenes queda vacía.',
     },
     {
       id: 'LEDGER-4.1-3',
@@ -4148,7 +4148,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que 4 fixtures acústicos bilingües en español (`ejecuta cargo test`, `aprueba el permiso`) e inglés (`run clippy and fix warnings`, `open pull request`) recorren el pipeline completo PTT -> captura en tramas -> STT local y entregan las órdenes en estricto orden FIFO a la sesión activa (`sess_active_agent_41`) y al puente IPC (`voice_enqueue_prompt`).',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `WhisperCliLocalBackend` falla cerrado con `LocalRuntimeBinaryUnavailable` si falta `whisper-cli` (nunca inventa transcripciones), que 4 fixtures bilingües ES/EN recorren el pipeline PTT -> STT y entregan las órdenes en FIFO a la sesión activa (`sess_active_agent_41`) y al puente IPC (`voice_enqueue_prompt`), y que cualquier audio desconocido o ruido se rechaza con `NoSpeechRecognized`.',
     },
     {
       id: 'LEDGER-4.1-4',
@@ -4170,7 +4170,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `download_and_verify_model_explicit` rechaza descargas sin confirmación explícita (`UserConfirmationRequired`), descargas truncadas (`IncompleteDownload`) y payloads alterados con SHA-256 inválido (`Sha256Mismatch`) sin dejar archivos parciales ni memoria residente, y acepta únicamente el artefacto íntegro verificado por SHA-256.',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica los manifiestos oficiales upstream `ggerganov/whisper.cpp` bajo licencia `MIT` (`ggml-tiny.bin`: `77_691_713` B, SHA-256 `be07e048...`; `ggml-base.bin`: `147_951_465` B, SHA-256 `60ed5bc3...`), y comprueba que `download_and_verify_model_explicit` rechaza descargas sin confirmación (`UserConfirmationRequired`), truncadas (`IncompleteDownload`) o con SHA-256 inválido (`Sha256Mismatch`) sin dejar archivos parciales ni memoria residente.',
     },
     {
       id: 'LEDGER-4.1-6',
@@ -4181,7 +4181,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que cuando falta el modelo en disco se expone `SttModelAvailability::Missing { download_card }` / `PttPipelineOutcome::ModelMissing { download_card }` con `model_id`, `expected_size_bytes` y `expected_sha256_hex`, que la carga del modelo es perezosa (`0 B` antes de usar PTT) y que al vencer el TTL de inactividad (`1500 ms`) se sobrescriben y liberan los pesos dejando `0 B` (`0 MB`) en RAM.',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que cuando falta el modelo en disco se expone `SttModelAvailability::Missing { download_card }` / `PttPipelineOutcome::ModelMissing { download_card }` con `model_id`, `license: "MIT"`, `expected_size_bytes` y `expected_sha256_hex`, que la carga del modelo es perezosa (`0 B` antes de usar PTT) y que al vencer el TTL de inactividad (`1500 ms`) se sobrescriben y liberan los pesos dejando `0 B` (`0 MB`) en RAM.',
     },
     {
       id: 'LEDGER-4.1-7',
@@ -4192,7 +4192,7 @@ export const PROJECT_STATE: ProjectStateData = {
       status: 'PENDIENTE-LOCAL',
       updatedAt: '2026-11-10',
       command: 'cargo test --manifest-path miku/Cargo.toml -p miku-ui --lib voice::tests_ptt_stt:: -- --nocapture',
-      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `redact_sensitive_voice_diagnostic` y `SttModelError` redactan transcripciones entrecomilladas, muestras PCM `[...]`, claves `sk-*` y tokens `Bearer`/`eyJ*`, y audita que todos los archivos `.rs` en `miku-ui/src/voice/` tienen estrictamente `< 600` líneas.',
+      evidenceNote: 'ESCRITO / PENDIENTE-LOCAL: Verifica que `redact_sensitive_voice_diagnostic` y `SttModelError` redactan transcripciones entrecomilladas, muestras PCM `[...]`, claves `sk-*` y tokens `Bearer`/`eyJ*`, y audita que todos los archivos `.rs` en `miku-ui/src/voice/` tienen estrictamente `< 600` líneas (`max = 576 < 600`).',
     },
   ],
 
@@ -4726,15 +4726,15 @@ export const PROJECT_STATE: ProjectStateData = {
 
   changelog: [
     {
-      version: 'Compuerta D · Paso 4.1 Implementado en PENDIENTE-LOCAL (F-16: Push-to-Talk `Alt+Space` y Transcripción STT Local Bilingüe ES/EN Bajo Demanda · `LEDGER-4.1-1..7`)',
+      version: 'Compuerta D · Paso 4.1 Corregido en PENDIENTE-LOCAL (Alineación con Contratos Reales + Captura WinMM `WAVEHDR` Real + Motor STT GGML Whisper v1 Fail-Closed · `LEDGER-4.1-1..7`)',
       date: '2026-11-10',
       gate: 'Compuerta D (Fases 0..3 VERIFICADAS [42/58 = 72.4%] · Paso 4.1 PENDIENTE-LOCAL)',
       summary:
-        'Implementado el Micro-paso 4.1 (`F-16`: Push-to-Talk y transcripción STT local bajo demanda) en `miku/crates/miku-ui/src/voice/{stt_engine.rs,capture_devices.rs,ptt_pipeline.rs,tests_ptt_stt.rs,mod.rs}` junto con el documento de diseño `docs/design/F-16.md`: (1) `PttSttOrchestrator` reutiliza `VoiceInteractionController` (`DEFAULT_PTT_HOTKEY_COMBO = "Alt+Space"`), autoriza `Capability::Input` en `GatekeeperEngine`, abre `PttAudioCaptureStream` exclusivamente mientras se mantiene pulsada la tecla y cierra/pone a cero el stream inmediatamente al soltar, cancelar (`Escape`), liberar temprano (`< 120 ms`), fallar la lectura o disparar el Kill Switch Global; (2) incluye sonda Win32 real `WinMmWaveInCaptureProbe` (`winmm.dll`: `waveInOpen` / `waveInReset` / `waveInClose`) y dispositivo determinista `DeterministicFixtureCaptureDevice`; (3) `OnDemandLocalSttRuntime` carga perezosamente modelos `.mkstt` (`MKSTT01\\0`) dentro de `CanonicalPathJail` verificando tamaño exacto y `SHA-256` en tiempo constante, transcribe localmente en español (`es`) e inglés (`en`) con `0` llamadas de red y `0` tokens de proveedor, entrega órdenes en FIFO a `VoiceSessionOrderQueue` y `WebView2IpcBridge` (`voice_enqueue_prompt`), y descarga/pone a cero los pesos al vencer el TTL (`0 MB` en RAM); (4) `download_and_verify_model_explicit` exige confirmación explícita (`user_confirmed == true`) y valida `SHA-256` antes de escribir en disco.',
+        'Corregidos los 44 errores de compilación en `miku-ui` y resueltas las dos brechas funcionales del Micro-paso 4.1 (`F-16`) en `miku/crates/miku-ui/src/voice/{stt_engine.rs,capture_devices.rs,ptt_pipeline.rs,tests_ptt_stt.rs}` y `docs/design/F-16.md` sin tocar crates previos (`0.1`–`3.13`) ni `miku/Cargo.lock`: (1) adaptación completa a los contratos reales (`MIN_PTT_HOLD_DURATION_MS`, `VoiceBufferZeroReport::zeroed_samples`, `CanonicalPathJail::new(&str)` + `resolve_and_confine`, `VoiceInteractionController::{new_default, start_ptt_session, ingest_pcm_frame, release_ptt_and_begin_processing, complete_utterance, cancel_cooperatively}`, `GatekeeperEngine::evaluate_request`, `UiKillSwitchManager::trip`); (2) captura hardware Win32 real en `WinMmWaveInCaptureProbe` (`waveInOpen` + preparación y encolado de 4 buffers `WAVEHDR` con `waveInPrepareHeader`/`waveInAddBuffer` + `waveInStart` + lectura por `WHDR_DONE` con zero-fill y re-encolado + `waveInStop -> waveInReset -> waveInUnprepareHeader -> zero-fill -> waveInClose`); (3) reemplazo del clasificador sintético Goertzel por validación real de formato `whisper.cpp` GGML v1 (`0x67676d6c`, `GgmlWhisperHparams`), manifiestos oficiales upstream `ggerganov/whisper.cpp` bajo licencia `MIT` (`ggml-tiny.bin`: `77_691_713` B, SHA-256 `be07e048...`; `ggml-base.bin`: `147_951_465` B, SHA-256 `60ed5bc3...`), `WhisperCliLocalBackend` fail-closed (`LocalRuntimeBinaryUnavailable` si falta `whisper-cli`) y `DeterministicCorpusSttBackend` que rechaza cualquier audio no registrado con `NoSpeechRecognized`.',
       highlights: [
-        'Suite TDD `LEDGER-4.1-1..7` implementada en `miku/crates/miku-ui/src/voice/tests_ptt_stt.rs` (416 líneas `< 600`).',
-        'Todos los módulos de `miku-ui/src/voice/` cumplen estrictamente el límite `< 600` líneas (`stt_engine.rs`: 588, `ptt_pipeline.rs`: 453, `controller.rs`: 438, `tests_ptt_stt.rs`: 416, `capture_devices.rs`: 373, `tests.rs`: 318, `types_and_buffer.rs`: 279, `audit.rs`: 221, `mod.rs`: 22).',
-        'Sin cambios en `Cargo.toml` ni regeneración de `miku/Cargo.lock`, preservando intacto el checkout local del usuario.',
+        'Eliminados los 44 errores de compilación adaptando `ptt_pipeline.rs`, `capture_devices.rs`, `stt_engine.rs` y `tests_ptt_stt.rs` a los contratos reales de `miku-ui`, `miku-gatekeeper` y `miku-protocol`.',
+        'Todos los módulos de `miku-ui/src/voice/` cumplen estrictamente el límite `< 600` líneas (`stt_engine.rs`: 576, `capture_devices.rs`: 568, `ptt_pipeline.rs`: 541, `tests_ptt_stt.rs`: 504, `controller.rs`: 438, `tests.rs`: 318, `types_and_buffer.rs`: 279, `audit.rs`: 221, `mod.rs`: 22).',
+        'Sin cambios en `Cargo.toml` ni en `miku/Cargo.lock`; el Paso 4.1 y `LEDGER-4.1-1..7` permanecen en `PENDIENTE-LOCAL`.',
       ],
     },
     {
@@ -5723,42 +5723,42 @@ export const PROJECT_STATE: ProjectStateData = {
     {
       path: 'docs/design/F-16.md',
       kind: 'file',
-      description: 'Documento de diseño técnico del Paso 4.1 (`F-16`): ciclo de vida PTT (`Alt+Space`), `PttAudioCaptureStream` / `WinMmWaveInCaptureProbe`, motor STT acústico-espectral bilingüe ES/EN (`MKSTT01\\0`), verificación `SHA-256`, TTL a `0 MB` y redacción de diagnósticos',
+      description: 'Documento de diseño técnico del Paso 4.1 (`F-16`): contratos reales de `miku-ui`/`miku-gatekeeper`, captura hardware WinMM `WAVEHDR` real, formato GGML Whisper v1 (`0x67676d6c`), manifiestos `ggerganov/whisper.cpp` (`MIT`), TTL a `0 MB` y redacción de diagnósticos',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/mod.rs',
       kind: 'file',
-      description: 'Raíz del dominio `voice` actualizada exportando `capture_devices`, `ptt_pipeline`, `stt_engine` y `tests_ptt_stt` (22 líneas < 600)',
-      deliveredInCurrentTurn: true,
+      description: 'Raíz del dominio `voice` exportando `capture_devices`, `ptt_pipeline`, `stt_engine` y `tests_ptt_stt` (22 líneas < 600)',
+      deliveredInCurrentTurn: false,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/stt_engine.rs',
       kind: 'file',
-      description: 'Motor STT local bajo demanda (`OnDemandLocalSttRuntime`), síntesis y extractor espectral Goertzel bilingüe ES/EN, verificador `SHA-256` (`verify_and_parse_stt_model_bytes`), tarjeta `SttModelDownloadCard` y redactor `redact_sensitive_voice_diagnostic` (588 líneas < 600)',
+      description: 'Motor STT local bajo demanda (`OnDemandLocalSttRuntime`), validación GGML Whisper v1 (`0x67676d6c`, `GgmlWhisperHparams`), manifiestos oficiales `ggerganov/whisper.cpp` (`ggml-tiny.bin` / `ggml-base.bin`, `MIT`), `WhisperCliLocalBackend` fail-closed y `DeterministicCorpusSttBackend` (576 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/capture_devices.rs',
       kind: 'file',
-      description: 'Trait `PttAudioCaptureStream`, dispositivo determinista `DeterministicFixtureCaptureDevice`, sonda Win32 `WinMmWaveInCaptureProbe` (`winmm.dll`) y cola FIFO `VoiceSessionOrderQueue` (373 líneas < 600)',
+      description: 'Trait `PttAudioCaptureStream`, captura hardware Win32 `WinMmWaveInCaptureProbe` con anillo `WAVEHDR` (`waveInPrepareHeader`/`waveInAddBuffer`/`waveInStart`/`WHDR_DONE`/`waveInUnprepareHeader`), `DeterministicFixtureCaptureDevice` y `VoiceSessionOrderQueue` (568 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/ptt_pipeline.rs',
       kind: 'file',
-      description: 'Orquestador `PttSttOrchestrator`: coordina `VoiceInteractionController`, `GatekeeperEngine`, `CanonicalPathJail`, `OnDemandLocalSttRuntime`, descarga explícita con verificación `SHA-256` y purga por Kill Switch (453 líneas < 600)',
+      description: 'Orquestador `PttSttOrchestrator`: coordina `VoiceInteractionController`, `GatekeeperEngine`, `CanonicalPathJail`, `OnDemandLocalSttRuntime`, descarga explícita con verificación `SHA-256` y purga por `UiKillSwitchManager::trip` (541 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
     {
       path: 'miku/crates/miku-ui/src/voice/tests_ptt_stt.rs',
       kind: 'file',
-      description: 'Suite TDD del Paso 4.1 (`LEDGER-4.1-1..7`): ciclo PTT, cierre en error/cancelación/Kill Switch, fixtures bilingües ES/EN, 0 red / 0 tokens, verificación SHA-256, tarjeta de descarga + TTL a 0 MB y redacción de errores (416 líneas < 600)',
+      description: 'Suite TDD del Paso 4.1 (`LEDGER-4.1-1..7`): ciclo PTT y `WAVEHDR`, cierre en error/cancelación/Kill Switch, backend `WhisperCliLocalBackend` fail-closed + corpus bilingüe ES/EN, 0 red / 0 tokens, verificación SHA-256 con manifiestos reales, TTL a 0 MB y redacción de errores (504 líneas < 600)',
       deliveredInCurrentTurn: true,
       status: 'Entregado (Plan/Cockpit)',
     },
