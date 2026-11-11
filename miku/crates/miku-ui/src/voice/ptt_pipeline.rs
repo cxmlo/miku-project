@@ -8,6 +8,8 @@ pub struct PttSttOrchestrator<C: PttAudioCaptureStream> {
     config: GroqSttConfig,
     secret_store: Box<dyn VoiceSecretAliasStore>,
     transport: Box<dyn GroqSttTransport>,
+    ducking: AudioDuckingController,
+    wake_word_config: OptionalWakeWordConfig,
     session_queue: VoiceSessionOrderQueue,
     network_requests_dispatched: u64,
     total_billed_seconds: u64,
@@ -45,10 +47,38 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             config,
             secret_store,
             transport,
+            ducking: AudioDuckingController::new_default_winmm(),
+            wake_word_config: OptionalWakeWordConfig::default(),
             session_queue: VoiceSessionOrderQueue::new(),
             network_requests_dispatched: 0,
             total_billed_seconds: 0,
         })
+    }
+
+    pub fn with_ducking_controller(mut self, ducking: AudioDuckingController) -> Self {
+        self.ducking = ducking;
+        self
+    }
+
+    pub fn ducking(&self) -> &AudioDuckingController {
+        &self.ducking
+    }
+
+    pub fn ducking_mut(&mut self) -> &mut AudioDuckingController {
+        &mut self.ducking
+    }
+
+    pub fn wake_word_config(&self) -> &OptionalWakeWordConfig {
+        &self.wake_word_config
+    }
+
+    pub fn set_wake_word_enabled(&mut self, enabled: bool) {
+        self.wake_word_config.enabled_by_user = enabled;
+    }
+
+    pub fn set_wake_word_power_policy(&mut self, policy: VoicePowerPolicy) {
+        self.wake_word_config.power_policy = policy;
+        self.voice.update_power_policy(policy);
     }
 
     pub fn voice(&self) -> &VoiceInteractionController {
@@ -144,6 +174,87 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             .open_capture_stream(VOICE_SAMPLE_RATE_HZ, VOICE_CHANNELS)
         {
             let _ = self.capture_device.stop_and_close_stream();
+            let _ = self.ducking.restore_original_volume(now_ms);
+            let _ = self.voice.cancel_cooperatively(
+                VoiceCancellationReason::ExplicitApiAbort,
+                now_ms,
+                avatar,
+                None,
+            );
+            return Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
+                &err.to_string(),
+            )));
+        }
+
+        if let Err(err) = self.ducking.engage_ducking(now_ms) {
+            let _ = self.capture_device.stop_and_close_stream();
+            let _ = self.ducking.restore_original_volume(now_ms);
+            let _ = self.voice.cancel_cooperatively(
+                VoiceCancellationReason::ExplicitApiAbort,
+                now_ms,
+                avatar,
+                None,
+            );
+            return Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
+                &err.to_string(),
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn trigger_optional_wake_word_and_open_stream(
+        &mut self,
+        confidence: f32,
+        now_ms: u64,
+        gatekeeper: &mut GatekeeperEngine,
+        avatar: &mut ProductionAvatarRuntime,
+    ) -> Result<(), SttEngineError> {
+        if !self.wake_word_config.is_listening_allowed() {
+            return Err(SttEngineError::UiFailure(
+                "optional wake word is disabled by default or suspended by power policy".to_string(),
+            ));
+        }
+
+        let verdict = gatekeeper.evaluate_request(
+            "miku-voice-wakeword",
+            Capability::Input,
+            "microphone:wake_word_stream",
+            &self.wake_word_config.phrase,
+            now_ms,
+        );
+        if !matches!(verdict, GatekeeperVerdict::Allow { .. }) {
+            return Err(SttEngineError::GatekeeperDenied(format!(
+                "wake-word microphone capture denied by Gatekeeper: {:?}",
+                verdict
+            )));
+        }
+
+        self.voice
+            .on_wake_word_detected(confidence, now_ms, avatar)
+            .map_err(|e| {
+                SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
+            })?;
+
+        if let Err(err) = self
+            .capture_device
+            .open_capture_stream(VOICE_SAMPLE_RATE_HZ, VOICE_CHANNELS)
+        {
+            let _ = self.capture_device.stop_and_close_stream();
+            let _ = self.ducking.restore_original_volume(now_ms);
+            let _ = self.voice.cancel_cooperatively(
+                VoiceCancellationReason::ExplicitApiAbort,
+                now_ms,
+                avatar,
+                None,
+            );
+            return Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
+                &err.to_string(),
+            )));
+        }
+
+        if let Err(err) = self.ducking.engage_ducking(now_ms) {
+            let _ = self.capture_device.stop_and_close_stream();
+            let _ = self.ducking.restore_original_volume(now_ms);
             let _ = self.voice.cancel_cooperatively(
                 VoiceCancellationReason::ExplicitApiAbort,
                 now_ms,
@@ -168,6 +279,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             Ok(c) => c,
             Err(err) => {
                 let _ = self.capture_device.stop_and_close_stream();
+                let _ = self.ducking.restore_original_volume(now_ms);
                 let _ = self.voice.cancel_cooperatively(
                     VoiceCancellationReason::ExplicitApiAbort,
                     now_ms,
@@ -184,11 +296,13 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
             Ok(wave) => {
                 if *self.voice.state() != VoiceInteractionState::Listening {
                     let _ = self.capture_device.stop_and_close_stream();
+                    let _ = self.ducking.restore_original_volume(now_ms);
                 }
                 Ok(wave)
             }
             Err(err) => {
                 let _ = self.capture_device.stop_and_close_stream();
+                let _ = self.ducking.restore_original_volume(now_ms);
                 let _ = self.voice.zero_and_reclaim();
                 Err(SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(
                     &err.to_string(),
@@ -205,8 +319,10 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         avatar: &mut ProductionAvatarRuntime,
         bridge: &mut WebView2IpcBridge,
     ) -> Result<PttPipelineOutcome, SttEngineError> {
-        // 1. Always close the microphone stream and zero hardware buffers BEFORE any cloud call
+        // 1. Always close the microphone stream, restore system audio volume to 100% of original,
+        // and zero hardware buffers BEFORE any cloud call.
         let device_zero_report = self.capture_device.stop_and_close_stream();
+        let _ = self.ducking.restore_original_volume(now_ms);
 
         let state_after_release = match self
             .voice
@@ -404,6 +520,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         bridge: Option<&mut WebView2IpcBridge>,
     ) -> Result<VoiceCancelReceipt, SttEngineError> {
         let _ = self.capture_device.stop_and_close_stream();
+        let _ = self.ducking.restore_original_volume(now_ms);
         self.voice
             .cancel_cooperatively(reason, now_ms, avatar, bridge)
             .map_err(|e| {
@@ -423,6 +540,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         bridge: &mut WebView2IpcBridge,
     ) -> Result<KillSwitchTripReport, SttEngineError> {
         let _ = self.capture_device.stop_and_close_stream();
+        let _ = self.ducking.restore_original_volume(now_ms);
         let _ = self.session_queue.clear_all();
         kill_switch
             .trip(

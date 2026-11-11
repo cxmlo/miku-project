@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod capture_devices;
 mod controller;
+pub mod media_and_ducking;
 pub mod ptt_pipeline;
 pub mod stt_backends;
 pub mod stt_engine;
@@ -14,6 +15,7 @@ pub mod types_and_buffer;
 
 pub use self::audit::*;
 pub use self::capture_devices::*;
+pub use self::media_and_ducking::*;
 pub use self::ptt_pipeline::*;
 pub use self::stt_backends::*;
 pub use self::stt_engine::*;
@@ -21,5 +23,7 @@ pub use self::types_and_buffer::*;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_media_ducking;
 #[cfg(test)]
 mod tests_ptt_stt;
