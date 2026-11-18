@@ -18,6 +18,10 @@ use miku_gateway::{start_gateway_server, GatewayConfig, LoopbackWsClient};
 use miku_protocol::{BaseContractBundle, IslandState, MikuLinkMessageV1};
 use serde::{Deserialize, Serialize};
 
+pub mod gsmtc;
+pub mod pc_control;
+pub use pc_control::*;
+
 pub const HKCU_RUN_SUBKEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 pub const MIKU_RUN_VALUE_NAME: &str = "MikuDesktopOrchestrator";
 pub const REQUIRED_BACKGROUND_ARGS: &str = "--background --headless";
@@ -29,6 +33,7 @@ pub enum PlatformError {
     InvalidRegistryCommand(String),
     RegistryBackendError(String),
     DaemonStartupFailed(String),
+    PermissionDenied(String),
 }
 
 impl std::fmt::Display for PlatformError {
@@ -45,6 +50,9 @@ impl std::fmt::Display for PlatformError {
             }
             PlatformError::DaemonStartupFailed(msg) => {
                 write!(f, "headless daemon startup failed: {}", msg)
+            }
+            PlatformError::PermissionDenied(msg) => {
+                write!(f, "permission denied: {}", msg)
             }
         }
     }

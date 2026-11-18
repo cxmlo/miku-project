@@ -213,6 +213,7 @@ pub enum UiError {
     KillSwitchError(String),
     IdleSuspensionError(String),
     DemoModeError(String),
+    VisionCaptureError(String),
 }
 
 impl std::fmt::Display for UiError {
@@ -286,6 +287,9 @@ impl std::fmt::Display for UiError {
             }
             UiError::DemoModeError(msg) => {
                 write!(f, "demo mode error: {}", msg)
+            }
+            UiError::VisionCaptureError(msg) => {
+                write!(f, "vision capture error: {}", msg)
             }
         }
     }

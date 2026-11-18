@@ -9,6 +9,13 @@
     clippy::invisible_characters
 )]
 
+pub mod http_loopback;
+pub mod lan_pairing;
+pub mod qr_codec;
+
+pub use http_loopback::{DefaultGatewayApiHandler, LoopbackApiHandler, LoopbackServerConfig};
+pub use qr_codec::{encode_qr_matrix, QrEccLevel, QrEncodeError, QrMatrix};
+
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -192,12 +199,17 @@ impl Drop for SessionGuard {
 pub struct GatewayServerHandle {
     pub local_addr: SocketAddr,
     pub registry: Arc<SessionRegistry>,
+    loopback_token: Option<String>,
     shutdown_tx: watch::Sender<bool>,
 }
 
 impl GatewayServerHandle {
     pub fn metrics(&self) -> GatewayMetricsSnapshot {
         self.registry.snapshot()
+    }
+
+    pub fn session_token(&self) -> Option<&str> {
+        self.loopback_token.as_deref()
     }
 
     pub fn trigger_shutdown(&self) {
@@ -208,6 +220,14 @@ impl GatewayServerHandle {
 pub async fn start_gateway_server(
     config: GatewayConfig,
     orchestrator: OrchestratorHandle,
+) -> Result<(GatewayServerHandle, tokio::task::JoinHandle<()>), GatewayError> {
+    start_gateway_server_with_loopback(config, orchestrator, LoopbackServerConfig::default()).await
+}
+
+pub async fn start_gateway_server_with_loopback(
+    config: GatewayConfig,
+    orchestrator: OrchestratorHandle,
+    loopback_cfg: LoopbackServerConfig,
 ) -> Result<(GatewayServerHandle, tokio::task::JoinHandle<()>), GatewayError> {
     config.validate_bind_policy()?;
 
@@ -220,6 +240,11 @@ pub async fn start_gateway_server(
 
     let registry = SessionRegistry::new();
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let loopback_ctx = Arc::new(http_loopback::LoopbackContext::from_config(
+        loopback_cfg,
+        orchestrator.clone(),
+    ));
+    let session_token = loopback_ctx.session_token.clone();
 
     let server_registry = Arc::clone(&registry);
     let handshake_timeout = config.handshake_timeout;
@@ -243,13 +268,15 @@ pub async fn start_gateway_server(
                             let reg = Arc::clone(&server_registry);
                             let orch = orchestrator.clone();
                             let conn_shutdown = shutdown_rx.clone();
+                            let ctx = Arc::clone(&loopback_ctx);
                             let task = tokio::task::spawn(async move {
-                                let _ = handle_ws_connection(
+                                let _ = http_loopback::dispatch_connection(
                                     stream,
                                     orch,
                                     reg,
                                     handshake_timeout,
                                     conn_shutdown,
+                                    ctx,
                                 )
                                 .await;
                             });
@@ -270,13 +297,14 @@ pub async fn start_gateway_server(
         GatewayServerHandle {
             local_addr,
             registry,
+            loopback_token: Some(session_token),
             shutdown_tx,
         },
         join,
     ))
 }
 
-async fn handle_ws_connection(
+pub(crate) async fn handle_authenticated_ws_stream(
     mut stream: TcpStream,
     orchestrator: OrchestratorHandle,
     registry: Arc<SessionRegistry>,
@@ -284,11 +312,6 @@ async fn handle_ws_connection(
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), GatewayError> {
     let mut guard = SessionGuard::new(Arc::clone(&registry));
-
-    // 1. Perform HTTP/1.1 -> WebSocket RFC 6455 Upgrade within handshake timeout
-    tokio::time::timeout(handshake_timeout, perform_server_http_upgrade(&mut stream))
-        .await
-        .map_err(|_| GatewayError::HandshakeTimeout)??;
 
     // 2. First WebSocket frame MUST be a valid `hello` envelope within handshake timeout
     let first_frame = tokio::select! {
@@ -658,89 +681,13 @@ async fn send_error_and_close(
 }
 
 // ============================================================================
-// RFC 6455 HTTP/1.1 Upgrade + Bounded Framing + Client Helper
+// RFC 6455 Bounded Framing + Client Helper
 // ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct WsFrame {
     pub opcode: u8,
     pub payload: Vec<u8>,
-}
-
-async fn perform_server_http_upgrade(stream: &mut TcpStream) -> Result<(), GatewayError> {
-    let mut buf = Vec::with_capacity(512);
-    let mut byte = [0u8; 1];
-    while !buf.ends_with(b"\r\n\r\n") {
-        let n = stream
-            .read(&mut byte)
-            .await
-            .map_err(|e| GatewayError::IoError(e.to_string()))?;
-        if n == 0 {
-            return Err(GatewayError::ConnectionClosed);
-        }
-        buf.push(byte[0]);
-        if buf.len() > MAX_HTTP_UPGRADE_HEADER_BYTES {
-            return Err(GatewayError::InvalidHttpUpgrade(
-                "HTTP upgrade header exceeded 4096 bytes".into(),
-            ));
-        }
-    }
-
-    let req_str = String::from_utf8(buf)
-        .map_err(|_| GatewayError::InvalidHttpUpgrade("non-UTF8 HTTP header".into()))?;
-    let mut lines = req_str.lines();
-    let request_line = lines
-        .next()
-        .ok_or_else(|| GatewayError::InvalidHttpUpgrade("empty request".into()))?;
-
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 || parts[0] != "GET" || parts[1] != MIKU_LINK_WS_PATH {
-        let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        let _ = stream.write_all(resp.as_bytes()).await;
-        return Err(GatewayError::InvalidHttpUpgrade(format!(
-            "invalid request path in '{}'",
-            request_line
-        )));
-    }
-
-    let mut ws_key: Option<String> = None;
-    let mut has_upgrade_ws = false;
-
-    for line in lines {
-        if let Some((k, v)) = line.split_once(':') {
-            let k_lower = k.trim().to_ascii_lowercase();
-            let v_trim = v.trim();
-            if k_lower == "sec-websocket-key" {
-                ws_key = Some(v_trim.to_string());
-            } else if k_lower == "upgrade" && v_trim.to_ascii_lowercase().contains("websocket") {
-                has_upgrade_ws = true;
-            }
-        }
-    }
-
-    let key = ws_key.ok_or_else(|| {
-        GatewayError::InvalidHttpUpgrade("missing Sec-WebSocket-Key header".into())
-    })?;
-    if !has_upgrade_ws {
-        return Err(GatewayError::InvalidHttpUpgrade(
-            "missing Upgrade: websocket header".into(),
-        ));
-    }
-
-    let accept_val = compute_websocket_accept_key(&key);
-    let response = format!(
-        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
-        accept_val
-    );
-    stream
-        .write_all(response.as_bytes())
-        .await
-        .map_err(|e| GatewayError::IoError(e.to_string()))?;
-    stream
-        .flush()
-        .await
-        .map_err(|e| GatewayError::IoError(e.to_string()))?;
-    Ok(())
 }
 
 /// Inspects payload length in the WebSocket header BEFORE allocating the payload buffer.

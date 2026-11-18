@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:47400 ws://localhost:* data: blob:;">
+  <title>Configuración · Miku</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/shared/theme.css">
+  <link rel="stylesheet" href="/settings/settings.css">
+  <script defer src="/shared/audio/sound-fx.js"></script>
+  <script defer src="/shared/core/qr.js"></script>
+  <script defer src="/shared/core/state.js"></script>
+  <script defer src="/shared/core/components.js"></script>
+  <script defer src="/shared/core/bridge.js"></script>
+  <script defer src="/shared/mascot/mascot.js"></script>
+  <script defer src="/settings/particles_header.js"></script>
+  <script defer src="/settings/settings_link.js"></script>
+  <script defer src="/settings/settings_app.js"></script>
+</head>
+<body>
+  <svg width="0" height="0" class="svg-defs" aria-hidden="true">
+    <defs>
+      <symbol id="ic-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+      <symbol id="ic-island" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3.8"/><rect x="9.8" y="5.4" width="4.4" height="2.2" rx="1.1"/></symbol>
+      <symbol id="ic-shield" viewBox="0 0 24 24"><path d="M12 2.8l7 2.6v5.9c0 4.3-2.8 7.7-7 9.4-4.2-1.7-7-5.1-7-9.4V5.4z"/><path d="M8.8 12l2.2 2.2 4.2-4.4"/></symbol>
+      <symbol id="ic-bot" viewBox="0 0 24 24"><rect x="4" y="7.5" width="16" height="12" rx="4.2"/><path d="M12 3.5v4"/><circle cx="12" cy="3.4" r="1.1"/><circle cx="8.8" cy="13.3" r="1.3"/><circle cx="15.2" cy="13.3" r="1.3"/></symbol>
+      <symbol id="ic-sparkles" viewBox="0 0 24 24"><path d="M11 4.5c.7 4.2 2.8 6.3 7 7-4.2.7-6.3 2.8-7 7-.7-4.2-2.8-6.3-7-7 4.2-.7 6.3-2.8 7-7z"/><path d="M19 15.5c.3 1.5 1 2.2 2.5 2.5-1.5.3-2.2 1-2.5 2.5-.3-1.5-1-2.2-2.5-2.5 1.5-.3 2.2-1 2.5-2.5z"/></symbol>
+      <symbol id="ic-key" viewBox="0 0 24 24"><path d="M7 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z"/><circle cx="7" cy="12" r="1.4"/><path d="M11.5 12H21M18 12v3.2M15 12v2.4"/></symbol>
+      <symbol id="ic-server" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="6.5" rx="2.5"/><rect x="3.5" y="13.5" width="17" height="6.5" rx="2.5"/><circle cx="7.5" cy="7.25" r="1.1"/><circle cx="7.5" cy="16.75" r="1.1"/><path d="M12 7.25h5M12 16.75h5"/></symbol>
+      <symbol id="ic-puzzle" viewBox="0 0 24 24"><path d="M19 11h-2V7a2 2 0 0 0-2-2h-4V3a2 2 0 0 0-4 0v2H5a2 2 0 0 0-2 2v4h2a2 2 0 0 1 0 4H3v4a2 2 0 0 0 2 2h4v-2a2 2 0 0 1 4 0v2h4a2 2 0 0 0 2-2v-4h2a2 2 0 0 0 0-4z"/></symbol>
+      <symbol id="ic-bell" viewBox="0 0 24 24"><path d="M6 17v-6a6 6 0 0 1 12 0v6l1.8 2H4.2z"/><path d="M10 21.2a2.2 2.2 0 0 0 4 0"/></symbol>
+      <symbol id="ic-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.8 11a6.2 6.2 0 0 0 12.4 0M12 17.2V21M8.8 21h6.4"/></symbol>
+      <symbol id="ic-link" viewBox="0 0 24 24"><rect x="8.5" y="5" width="7" height="14" rx="2.2"/><path d="M5.3 9.2a4.8 4.8 0 0 0 0 5.6M18.7 9.2a4.8 4.8 0 0 1 0 5.6"/></symbol>
+      <symbol id="ic-monitor" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="3"/><path d="M12 16.5V20M8.5 20h7"/></symbol>
+      <symbol id="ic-activity" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
+      <symbol id="ic-alert" viewBox="0 0 24 24"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r="1"/></symbol>
+      <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="app-window win gl" id="settings-app-root">
+    <div class="top-chrome" id="top-chrome">
+      <div class="chrome-title">
+        <span class="chrome-dot" aria-hidden="true"></span>
+        <span class="chrome-text">Configuración · Miku</span>
+        <span class="chrome-badge">v0.2.0</span>
+      </div>
+      <div class="win-ctrls">
+        <button type="button" class="wc-btn min" id="win-min" title="Minimizar" aria-label="Minimizar"></button>
+        <button type="button" class="wc-btn cls" id="win-cls" title="Cerrar" aria-label="Cerrar"></button>
+      </div>
+    </div>
+
+    <div class="app-scroll">
+      <div class="shell">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-brand-row">
+            <span class="apw" id="sidebar-av" data-av="#ffffff|none|head|0|"><canvas id="sidebar-hl" class="apimg" width="84" height="84"></canvas></span>
+            <span class="sidebar-brand-name">Miku</span>
+          </div>
+          <nav class="rail nav" id="rail" aria-label="Secciones de configuración"></nav>
+          <div class="sidebar-footer">
+            <div class="sidebar-status-pill" id="settings-gw-pill">
+              <span class="pulse-dot" id="settings-gw-dot"></span>
+              <span id="settings-gw-label">Conectando · Gateway</span>
+            </div>
+          </div>
+        </aside>
+        <main class="pane" id="pane" tabindex="-1"></main>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

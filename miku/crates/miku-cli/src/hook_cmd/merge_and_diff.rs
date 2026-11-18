@@ -78,6 +78,36 @@ fn build_cursor_mcp_entry() -> Value {
     })
 }
 
+fn resolve_hook_relay_exe() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_string))
+        .unwrap_or_else(|| "miku.exe".to_string())
+}
+
+fn build_antigravity_hooks_group() -> Value {
+    let exe = resolve_hook_relay_exe();
+    let handler = |event: &str, timeout: u64| -> Value {
+        let cmd = if exe.contains(' ') {
+            format!("\"{}\" hook relay --agent antigravity {}", exe, event)
+        } else {
+            format!("{} hook relay --agent antigravity {}", exe, event)
+        };
+        serde_json::json!({
+            "type": "command",
+            "command": cmd,
+            "timeout": timeout
+        })
+    };
+    serde_json::json!({
+        "PreToolUse": [{ "matcher": "*", "hooks": [handler("PreToolUse", 120)] }],
+        "PostToolUse": [{ "matcher": "*", "hooks": [handler("PostToolUse", 10)] }],
+        "PreInvocation": [handler("PreInvocation", 10)],
+        "PostInvocation": [handler("PostInvocation", 10)],
+        "Stop": [handler("Stop", 10)]
+    })
+}
+
 fn is_miku_hook_object(item: &Value) -> bool {
     item.get("id")
         .and_then(|v| v.as_str())
@@ -194,6 +224,12 @@ pub fn merge_miku_hook_settings_from_map(
                 "PreToolUse",
                 build_cursor_hook_entry(),
             )?;
+        }
+        HookTargetAgent::Antigravity => {
+            root_map.insert(
+                MIKU_HOOK_ENTRY_ID.to_string(),
+                build_antigravity_hooks_group(),
+            );
         }
     }
 

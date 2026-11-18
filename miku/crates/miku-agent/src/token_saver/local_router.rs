@@ -401,6 +401,22 @@ impl LocalIntentRouter {
                     snapshot.active_agents_count, snapshot.project_id
                 ),
             )),
+            "estado del equipo"
+            | "estado pc"
+            | "estado del sistema"
+            | "device status"
+            | "system status" => Some((
+                "query_system_status".to_string(),
+                format!(
+                    "Estado local [{}]: modelo={}, agentes_activos={}, modo_energia={}, bateria={}%, hora={}",
+                    snapshot.project_id,
+                    snapshot.active_model_display,
+                    snapshot.active_agents_count,
+                    snapshot.power_mode,
+                    snapshot.battery_percent,
+                    snapshot.current_time_iso
+                ),
+            )),
             "gasto diario"
             | "presupuesto diario"
             | "cuanto he gastado hoy"

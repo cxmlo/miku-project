@@ -15,10 +15,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 use miku_cli::{
-    execute_cli_demo_mode, execute_cli_hook_command, execute_cli_secret_command,
-    format_demo_session_report, query_live_windows_webview2_version,
-    run_deterministic_doctor_benchmark_cycle, run_doctor_suite, DoctorRunConfig,
-    WebView2ProbeSource, BUDGET_MAX_PRIVATE_RAM_MB, BUDGET_MAX_RELEASE_BINARY_MB,
+    execute_cli_demo_mode, execute_cli_hook_command, execute_cli_installer_command,
+    execute_cli_secret_command, format_demo_session_report, maybe_run_ci_bench_and_exit,
+    query_live_windows_webview2_version, run_deterministic_doctor_benchmark_cycle, run_doctor_suite,
+    run_unified_smoke_summary, DoctorRunConfig, WebView2ProbeSource, BUDGET_MAX_PRIVATE_RAM_MB,
+    BUDGET_MAX_RELEASE_BINARY_MB,
 };
 use miku_platform::{configure_headless_command, LaunchConfig, WIN32_CREATE_NO_WINDOW};
 
@@ -219,10 +220,62 @@ fn main() {
         }
     }
 
+    // Subcommand mode: `miku-cli install|uninstall|update ...` (Paso 5.4 · F-24)
+    match execute_cli_installer_command(&args) {
+        Ok(Some(output)) => {
+            println!("{}", output);
+            std::process::exit(0);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("MIKU_CLI_INSTALL_ERR: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    maybe_run_ci_bench_and_exit(&args);
+
     let current_exe = env::current_exe().expect("failed to resolve current_exe");
     let binary_mb = fs::metadata(&current_exe)
         .map(|m| (m.len() as f64) / (1024.0 * 1024.0))
         .unwrap_or(0.0);
+
+    // Subcommand mode: `miku run [--smoke] [--json]` (Paso 4.14 · binario único unificado)
+    if args.iter().any(|a| a == "run" || a == "unified-smoke") {
+        let json_mode = args.iter().any(|a| a == "--json");
+        let data_dir = env::temp_dir().join(format!("miku_unified_run_{}", std::process::id()));
+        match run_unified_smoke_summary(&data_dir) {
+            Ok((boot, shut)) => {
+                let _ = fs::remove_dir_all(&data_dir);
+                if json_mode {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "boot": boot,
+                            "shutdown": shut,
+                        }))
+                        .unwrap_or_else(|_| "{}".to_string())
+                    );
+                } else {
+                    println!(
+                        "MIKU_UNIFIED_OK|crates={}|cold_ms={:.2}|pill_ms={:.2}|wal={}|ram_mb={:.2}|orphans={}",
+                        boot.connected_subsystems.len(),
+                        boot.cold_start_ms,
+                        boot.pill_ready_ms,
+                        boot.sqlite_journal_mode,
+                        boot.process_private_mb,
+                        shut.live_webview2_child_pids
+                    );
+                }
+                std::process::exit(0);
+            }
+            Err(e) => {
+                let _ = fs::remove_dir_all(&data_dir);
+                eprintln!("MIKU_UNIFIED_ERR: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     // Subcommand mode: `miku-cli doctor [--json]`
     if args.iter().any(|a| a == "doctor") {

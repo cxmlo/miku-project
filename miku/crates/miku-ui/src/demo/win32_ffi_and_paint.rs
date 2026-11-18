@@ -37,6 +37,8 @@ pub(crate) mod win32_demo_ffi {
     pub(crate) const VK_LBUTTON: i32 = 0x01;
     pub(crate) const VK_R_KEY: i32 = 0x52;
     pub(crate) const TRANSPARENT_BK: i32 = 1;
+    pub(crate) const DEFAULT_GUI_FONT: i32 = 17;
+    pub(crate) const DT_VCENTER_SINGLE_ELLIPSIS: Uint = 0x0000_0020 | 0x0000_0004 | 0x0000_8000;
 
     pub(crate) static DEMO_WINDOW_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -140,6 +142,7 @@ pub(crate) mod win32_demo_ffi {
         pub(crate) fn GetDC(hwnd: Hwnd) -> Hdc;
         pub(crate) fn ReleaseDC(hwnd: Hwnd, hdc: Hdc) -> i32;
         pub(crate) fn FillRect(hdc: Hdc, lprc: *const WinRect, hbr: Hbrush) -> i32;
+        pub(crate) fn DrawTextW(hdc: Hdc, lpch_text: *const u16, cch_text: i32, lprc: *mut WinRect, format: Uint) -> i32;
         pub(crate) fn FrameRgn(hdc: Hdc, hrgn: Hrgn, hbr: Hbrush, n_width: i32, n_height: i32) -> Bool;
         pub(crate) fn DestroyWindow(hwnd: Hwnd) -> Bool;
     }
@@ -160,7 +163,7 @@ pub(crate) mod win32_demo_ffi {
         pub(crate) fn Ellipse(hdc: Hdc, left: i32, top: i32, right: i32, bottom: i32) -> Bool;
         pub(crate) fn SetBkMode(hdc: Hdc, mode: i32) -> i32;
         pub(crate) fn SetTextColor(hdc: Hdc, color: Dword) -> Dword;
-        pub(crate) fn TextOutW(hdc: Hdc, x: i32, y: i32, lp_string: *const u16, c: i32) -> Bool;
+        pub(crate) fn GetStockObject(i: i32) -> HgdIobj;
     }
 
     pub(crate) const fn rgb_colorref(r: u8, g: u8, b: u8) -> Dword {
@@ -290,14 +293,28 @@ pub(crate) mod win32_demo_ffi {
         );
         let display_text = ctrl.last_demo_banner();
         let text_utf16: Vec<u16> = display_text.encode_utf16().collect();
-        let max_chars = text_utf16.len().min(62) as i32;
-        let _ = TextOutW(
+        let gui_font = GetStockObject(DEFAULT_GUI_FONT);
+        let old_font = if !gui_font.is_null() {
+            SelectObject(hdc, gui_font)
+        } else {
+            null_mut()
+        };
+        let mut text_rc = WinRect {
+            left: 42,
+            top: 4,
+            right: (wave_base_x - 8).max(48),
+            bottom: (height - 4).max(16),
+        };
+        let _ = DrawTextW(
             hdc,
-            44,
-            (height / 2 - 8).max(6),
             text_utf16.as_ptr(),
-            max_chars,
+            text_utf16.len().min(62) as i32,
+            &mut text_rc,
+            DT_VCENTER_SINGLE_ELLIPSIS,
         );
+        if !old_font.is_null() {
+            let _ = SelectObject(hdc, old_font);
+        }
 
         let _ = DeleteObject(bg_brush);
         let _ = DeleteObject(border_brush);

@@ -9,8 +9,6 @@ mod win32_ffi_and_paint;
 
 pub use self::sandbox_and_options::*;
 pub use self::win32_event_loop::*;
-#[cfg(target_os = "windows")]
-pub(crate) use self::win32_ffi_and_paint::*;
 
 #[cfg(test)]
 mod tests;

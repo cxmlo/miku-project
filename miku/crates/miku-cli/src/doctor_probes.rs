@@ -410,3 +410,27 @@ pub fn probe_orphan_processes(
         (res, orphan_pids)
     }
 }
+
+/// Checks Tailscale mesh availability and away-mode tunnel readiness cleanly (`ADR-013`).
+pub fn probe_tailscale_remote_tunnel(gateway_port: u16) -> DiagnosticProbeResult {
+    let t0 = Instant::now();
+    let mgr = miku_tunnel::TailscaleTunnelManager::new(gateway_port);
+    let backend = miku_tunnel::WindowsTailscaleCliBackend::new();
+    let doc = mgr.doctor_check(&backend);
+    let latency_ms = t0.elapsed().as_secs_f64() * 1_000.0;
+
+    let status = if doc.healthy {
+        ProbeStatus::Pass
+    } else {
+        ProbeStatus::Warn
+    };
+
+    DiagnosticProbeResult {
+        probe_id: "tailscale_tunnel".to_string(),
+        title: "Tailscale Private Mesh Remote Tunnel (ADR-013)".to_string(),
+        status,
+        latency_ms,
+        summary: doc.summary,
+        remediation: doc.remediation,
+    }
+}

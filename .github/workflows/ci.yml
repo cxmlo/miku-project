@@ -48,6 +48,11 @@ jobs:
       - name: Run miku doctor v0 diagnostic suite
         run: cargo run --release --manifest-path miku/Cargo.toml -p miku-cli --bin miku-cli -- doctor --json
 
+      - name: Build single production binary miku.exe (release LTO) and enforce hard CI budgets (Step 5.1)
+        run: |
+          cargo build --manifest-path miku/Cargo.toml --release --bin miku
+          .\miku\target\release\miku.exe ci-bench --runs 5 --json
+
       - name: Install and run cargo-audit & cargo-deny license checks
         run: |
           cargo install --locked cargo-audit cargo-deny

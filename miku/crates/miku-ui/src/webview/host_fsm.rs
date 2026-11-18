@@ -61,6 +61,10 @@ impl<D: WebView2LifecycleDriver> WebView2HostStateMachine<D> {
         &self.policy
     }
 
+    pub fn driver(&self) -> &D {
+        &self.driver
+    }
+
     pub fn cold_spawns_count(&self) -> u64 {
         self.cold_spawns_count
     }

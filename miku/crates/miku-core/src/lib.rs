@@ -9,6 +9,8 @@
     clippy::invisible_characters
 )]
 
+pub mod productivity;
+
 use std::collections::{HashMap, HashSet};
 use miku_protocol::{
     constant_time_token_eq, BaseContractBundle, IslandState, MikuLinkEnvelopeV1,

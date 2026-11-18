@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "notes": "Drop custom .wav, .mp3 or .ogg sound files here and map them by event key. Unmapped slots use the Web Audio synthesizer automatically.",
+  "slots": {
+    "click": null,
+    "pop": null,
+    "notification": null,
+    "success": null,
+    "alert": null,
+    "update": null,
+    "chime": null,
+    "error": null
+  }
+}

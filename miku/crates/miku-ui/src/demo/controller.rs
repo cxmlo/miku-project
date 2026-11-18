@@ -1,4 +1,6 @@
 #![allow(unused_imports)]
+#[cfg(target_os = "windows")]
+use crate::demo::win32_event_loop::win32_demo_runner;
 use crate::prelude::*;
 
 impl DemoInteractiveController {

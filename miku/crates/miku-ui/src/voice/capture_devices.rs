@@ -19,6 +19,7 @@ pub struct DeterministicFixtureCaptureDevice {
     close_calls: u64,
     staged_pcm: Vec<i16>,
     read_cursor: usize,
+    injected_open_error: Option<String>,
     injected_read_error: Option<String>,
 }
 
@@ -30,6 +31,7 @@ impl DeterministicFixtureCaptureDevice {
             close_calls: 0,
             staged_pcm: Vec::new(),
             read_cursor: 0,
+            injected_open_error: None,
             injected_read_error: None,
         }
     }
@@ -41,6 +43,7 @@ impl DeterministicFixtureCaptureDevice {
             close_calls: 0,
             staged_pcm: pcm,
             read_cursor: 0,
+            injected_open_error: None,
             injected_read_error: None,
         }
     }
@@ -49,11 +52,16 @@ impl DeterministicFixtureCaptureDevice {
         self.staged_pcm.fill(0);
         self.staged_pcm = pcm;
         self.read_cursor = 0;
+        self.injected_open_error = None;
         self.injected_read_error = None;
     }
 
     pub fn staged_remaining_samples(&self) -> usize {
         self.staged_pcm.len().saturating_sub(self.read_cursor)
+    }
+
+    pub fn inject_open_error(&mut self, err_msg: Option<String>) {
+        self.injected_open_error = err_msg;
     }
 
     pub fn inject_read_error(&mut self, err_msg: Option<String>) {
@@ -69,6 +77,9 @@ impl Default for DeterministicFixtureCaptureDevice {
 
 impl PttAudioCaptureStream for DeterministicFixtureCaptureDevice {
     fn open_capture_stream(&mut self, sample_rate_hz: u32, channels: u8) -> Result<(), UiError> {
+        if let Some(msg) = self.injected_open_error.take() {
+            return Err(UiError::VoiceInteractionError(msg));
+        }
         if sample_rate_hz != VOICE_SAMPLE_RATE_HZ || channels != VOICE_CHANNELS {
             return Err(UiError::VoiceInteractionError(format!(
                 "unsupported audio format: {} Hz / {} ch",

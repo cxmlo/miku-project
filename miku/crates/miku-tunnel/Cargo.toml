@@ -1,0 +1,14 @@
+[package]
+name = "miku-tunnel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Secure remote access orchestrator via free Tailscale private mesh VPN (ADR-013)"
+
+[dependencies]
+miku-protocol = { path = "../miku-protocol" }
+miku-gateway = { path = "../miku-gateway" }
+miku-platform = { path = "../miku-platform" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

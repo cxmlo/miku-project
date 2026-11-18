@@ -6,7 +6,7 @@ mod append_and_verify;
 pub mod paths_and_store;
 pub mod viewer_and_bench;
 
-pub(crate) use self::append_and_verify::*;
+pub(crate) use self::append_and_verify::FileCreationHelper;
 pub use self::paths_and_store::*;
 pub use self::viewer_and_bench::*;
 

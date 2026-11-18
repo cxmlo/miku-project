@@ -23,41 +23,34 @@ fn temp_test_dir(tag: &str) -> PathBuf {
 }
 
 fn build_voice_gatekeeper_allow_all() -> GatekeeperEngine {
-    let mut profile = ProjectProfile::new("voice-4-2-profile", ".");
-    profile.allow_rules.insert(
-        Capability::Input,
-        vec![
-            "microphone:*".to_string(),
-            "media:transport_control".to_string(),
-        ],
-    );
-    profile.allow_rules.insert(
-        Capability::Network,
-        vec![
-            "api.groq.com*".to_string(),
-            "127.0.0.1*".to_string(),
-            "groq_stt_key".to_string(),
-        ],
-    );
-    GatekeeperEngine::new(profile, ".", 60).expect("gatekeeper init")
+    let root = env!("CARGO_MANIFEST_DIR");
+    let profile = ProjectProfile::new("voice-4-2-profile", root, 30_000)
+        .with_rule(Capability::Input, "microphone:*", PolicyEffect::Allow, true)
+        .with_rule(Capability::Input, "media:transport_control", PolicyEffect::Allow, true)
+        .with_rule(Capability::Network, "api.groq.com*", PolicyEffect::Allow, true)
+        .with_rule(Capability::Network, "127.0.0.1*", PolicyEffect::Allow, true)
+        .with_rule(Capability::Network, GROQ_DEFAULT_KEY_ALIAS, PolicyEffect::Allow, true);
+    GatekeeperEngine::new(profile).expect("gatekeeper init")
 }
 
 struct MockGroqOkTransport;
 
 impl GroqSttTransport for MockGroqOkTransport {
     fn transcribe_pcm16_mono(
-        &self,
+        &mut self,
         config: &GroqSttConfig,
         _api_key: &ZeroizingBytes,
         pcm_samples: &[i16],
         sample_rate_hz: u32,
     ) -> Result<GroqSttTranscript, SttEngineError> {
-        let billing = GroqBillingEstimate::from_pcm_samples(pcm_samples.len(), sample_rate_hz);
+        let duration_ms = ((pcm_samples.len() as u64) * 1_000) / (sample_rate_hz.max(1) as u64);
+        let billing = GroqBillingEstimate::compute(config.model, duration_ms);
         Ok(GroqSttTranscript {
             text: "reproduce siguiente pista y corre cargo test".to_string(),
-            language: config.language_hint.unwrap_or(VoiceSttLanguage::Es),
-            model_used: config.model.as_str().to_string(),
-            audio_duration_ms: billing.actual_duration_ms,
+            language: config.language_hint.unwrap_or(SttLanguage::Es),
+            model: config.model,
+            sample_count: pcm_samples.len(),
+            duration_ms,
             billing,
         })
     }
@@ -118,14 +111,19 @@ fn test_audio_ducking_restores_exact_volume_on_capture_error_escape_early_releas
 {
     let temp = temp_test_dir("error_paths");
     let mut gk = build_voice_gatekeeper_allow_all();
-    let mut avatar = ProductionAvatarRuntime::load_from_dir(avatar_assets_dir()).expect("avatar");
-    let mut bridge = WebView2IpcBridge::new("miku-voice-4-2-token");
+    let mut reloader = AvatarPackHotReloader::new(&avatar_assets_dir()).expect("avatar reloader");
+    let avatar = reloader.runtime_mut();
+    let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
 
-    let mut cfg = GroqSttConfig::default_with_consent(true);
-    cfg.endpoint_url = "http://127.0.0.1:9/openai/v1/audio/transcriptions".to_string();
+    let cfg = GroqSttConfig::default()
+        .with_consent(true)
+        .with_endpoint("https://api.groq.com/openai/v1/audio/transcriptions");
 
-    let mut secrets = InMemoryVoiceSecretAliasStore::new();
-    secrets.insert_alias("groq_stt_key", b"gsk_test_dummy_secret_value_4_2".to_vec());
+    let secrets = InMemoryVoiceSecretVault::with_alias_secret(
+        GROQ_DEFAULT_KEY_ALIAS,
+        b"gsk_test_dummy_secret_value_4_2",
+    )
+    .expect("secret vault");
 
     let original_snap = SystemAudioSnapshot::from_scalar(0.78, false);
     let duck_controller =
@@ -134,7 +132,7 @@ fn test_audio_ducking_restores_exact_volume_on_capture_error_escape_early_releas
     let mut orch = PttSttOrchestrator::with_transport(
         avatar_assets_dir(),
         cfg,
-        WasapiCaptureDevice::new_loopback(),
+        DeterministicFixtureCaptureDevice::with_staged_pcm(vec![1_400i16; 3_200]),
         Box::new(secrets),
         Box::new(MockGroqOkTransport),
     )
@@ -142,39 +140,41 @@ fn test_audio_ducking_restores_exact_volume_on_capture_error_escape_early_releas
     .with_ducking_controller(duck_controller);
 
     // Path A: open_capture_stream failure leaves volume untouched at 78%
-    orch.capture_device_mut().fail_on_open = true;
+    orch.capture_device_mut()
+        .inject_open_error(Some("simulated open capture failure".to_string()));
     let err = orch
-        .press_ptt_and_open_stream(PTT_DEFAULT_HOTKEY, 1_000, 0x10, 0x10, 0x99, &mut gk, &mut avatar)
+        .press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 1_000, 0x10, 0x10, 0x99, &mut gk, avatar)
         .expect_err("open stream should fail");
     assert!(matches!(err, SttEngineError::UiFailure(_)));
     assert!(!orch.ducking().is_ducked());
     assert_eq!(orch.ducking().current_backend_snapshot().unwrap(), original_snap);
-    orch.capture_device_mut().fail_on_open = false;
 
     // Path B: read_captured_pcm_chunk error mid-recording restores 78% immediately
-    orch.press_ptt_and_open_stream(PTT_DEFAULT_HOTKEY, 2_000, 0x10, 0x10, 0x99, &mut gk, &mut avatar)
+    orch.capture_device_mut().restage_pcm(vec![1_400i16; 3_200]);
+    orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 2_000, 0x10, 0x10, 0x99, &mut gk, avatar)
         .expect("open ok");
     assert!(orch.ducking().is_ducked());
     assert!((orch.ducking().current_backend_snapshot().unwrap().volume_scalar - 0.20).abs() < 1e-4);
 
-    orch.capture_device_mut().fail_on_read = true;
+    orch.capture_device_mut()
+        .inject_read_error(Some("simulated read pcm failure".to_string()));
     let read_err = orch
-        .pump_ptt_capture_chunk(320, 2_100, &mut avatar, Some(&mut bridge))
+        .pump_ptt_capture_chunk(320, 2_100, avatar, Some(&mut bridge))
         .expect_err("read failure");
     assert!(matches!(read_err, SttEngineError::UiFailure(_)));
     assert!(!orch.ducking().is_ducked());
     assert_eq!(orch.ducking().current_backend_snapshot().unwrap(), original_snap);
-    orch.capture_device_mut().fail_on_read = false;
 
     // Path C: Cooperative cancellation (`Escape`) restores 78% immediately
-    orch.press_ptt_and_open_stream(PTT_DEFAULT_HOTKEY, 3_000, 0x10, 0x10, 0x99, &mut gk, &mut avatar)
+    orch.capture_device_mut().restage_pcm(vec![1_400i16; 3_200]);
+    orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 3_000, 0x10, 0x10, 0x99, &mut gk, avatar)
         .expect("open ok");
     assert!(orch.ducking().is_ducked());
     let _ = orch
         .abort_and_cleanup(
             VoiceCancellationReason::UserPressedEscape,
             3_200,
-            &mut avatar,
+            avatar,
             Some(&mut bridge),
         )
         .expect("escape abort");
@@ -182,30 +182,31 @@ fn test_audio_ducking_restores_exact_volume_on_capture_error_escape_early_releas
     assert_eq!(orch.ducking().current_backend_snapshot().unwrap(), original_snap);
 
     // Path D: Early release (< 120 ms debounce) restores 78%
-    orch.press_ptt_and_open_stream(PTT_DEFAULT_HOTKEY, 4_000, 0x10, 0x10, 0x99, &mut gk, &mut avatar)
+    orch.capture_device_mut().restage_pcm(vec![1_400i16; 3_200]);
+    orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 4_000, 0x10, 0x10, 0x99, &mut gk, avatar)
         .expect("open ok");
     assert!(orch.ducking().is_ducked());
     let early = orch
-        .release_ptt_and_transcribe_to_session("sess-4-2", 4_050, &mut gk, &mut avatar, &mut bridge)
+        .release_ptt_and_transcribe_to_session("sess-4-2", 4_050, &mut gk, avatar, &mut bridge)
         .expect("early release outcome");
     assert!(matches!(early, PttPipelineOutcome::Cancelled { .. }));
     assert!(!orch.ducking().is_ducked());
     assert_eq!(orch.ducking().current_backend_snapshot().unwrap(), original_snap);
 
     // Path E: Global Kill Switch (`Ctrl+Alt+Shift+K`) mid-recording restores 78% immediately
-    orch.press_ptt_and_open_stream(PTT_DEFAULT_HOTKEY, 5_000, 0x10, 0x10, 0x99, &mut gk, &mut avatar)
+    orch.capture_device_mut().restage_pcm(vec![1_400i16; 3_200]);
+    orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 5_000, 0x10, 0x10, 0x99, &mut gk, avatar)
         .expect("open ok");
     assert!(orch.ducking().is_ducked());
     let mut ks = UiKillSwitchManager::new();
-    let mut audit_store =
-        PersistentJsonlAuditStore::new(temp.join("audit.jsonl"), 64 * 1024).expect("audit store");
+    let mut audit_store = PersistentJsonlAuditStore::open_default(&temp).expect("audit store");
     let _ = orch
         .trip_kill_switch_and_purge(
             &mut ks,
             5_150,
             "emergency kill switch during ducking",
             &mut gk,
-            &mut avatar,
+            avatar,
             &mut audit_store,
             &mut bridge,
         )
@@ -278,21 +279,25 @@ fn test_idempotent_double_duck_and_drop_guard_crash_recovery_never_leave_audio_a
 #[test]
 fn test_ptt_orchestrator_integrates_ducking_during_listening_and_restores_on_release_or_failure() {
     let mut gk = build_voice_gatekeeper_allow_all();
-    let mut avatar = ProductionAvatarRuntime::load_from_dir(avatar_assets_dir()).expect("avatar");
-    let mut bridge = WebView2IpcBridge::new("miku-voice-4-2-e2e");
+    let mut reloader = AvatarPackHotReloader::new(&avatar_assets_dir()).expect("avatar reloader");
+    let avatar = reloader.runtime_mut();
+    let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
 
-    let mut cfg = GroqSttConfig::default_with_consent(true);
-    cfg.endpoint_url = "http://127.0.0.1:9/openai/v1/audio/transcriptions".to_string();
+    let cfg = GroqSttConfig::default()
+        .with_consent(true)
+        .with_endpoint("https://api.groq.com/openai/v1/audio/transcriptions");
 
-    let mut secrets = InMemoryVoiceSecretAliasStore::new();
-    secrets.insert_alias("groq_stt_key", b"gsk_test_dummy_secret_value_4_2".to_vec());
+    let secrets = InMemoryVoiceSecretVault::with_alias_secret(
+        GROQ_DEFAULT_KEY_ALIAS,
+        b"gsk_test_dummy_secret_value_4_2",
+    )
+    .expect("secret vault");
 
     let initial_88 = SystemAudioSnapshot::from_scalar(0.88, false);
     let duck_ctrl =
         AudioDuckingController::new(Box::new(SimulatedAudioMediaBackend::new(0.88, false)));
 
-    let mut dev = WasapiCaptureDevice::new_loopback();
-    dev.enqueue_simulated_microphone_pcm(&vec![1400i16; 3_200]);
+    let dev = DeterministicFixtureCaptureDevice::with_staged_pcm(vec![1_400i16; 3_200]);
 
     let mut orch = PttSttOrchestrator::with_transport(
         avatar_assets_dir(),
@@ -304,34 +309,33 @@ fn test_ptt_orchestrator_integrates_ducking_during_listening_and_restores_on_rel
     .expect("orchestrator")
     .with_ducking_controller(duck_ctrl);
 
-    orch.press_ptt_and_open_stream(PTT_DEFAULT_HOTKEY, 1_000, 0x20, 0x20, 0x88, &mut gk, &mut avatar)
+    orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 1_000, 0x20, 0x20, 0x88, &mut gk, avatar)
         .expect("press ptt");
     assert!(orch.ducking().is_ducked());
     assert!((orch.ducking().current_backend_snapshot().unwrap().volume_scalar - 0.20).abs() < 1e-4);
 
     let _ = orch
-        .pump_ptt_capture_chunk(3_200, 1_100, &mut avatar, Some(&mut bridge))
+        .pump_ptt_capture_chunk(3_200, 1_100, avatar, Some(&mut bridge))
         .expect("pump chunk");
     assert!(orch.ducking().is_ducked());
 
     let outcome = orch
-        .release_ptt_and_transcribe_to_session("sess-duck-ok", 1_300, &mut gk, &mut avatar, &mut bridge)
+        .release_ptt_and_transcribe_to_session("sess-duck-ok", 1_300, &mut gk, avatar, &mut bridge)
         .expect("transcribe ok");
     assert!(matches!(outcome, PttPipelineOutcome::TranscribedAndEnqueued { .. }));
     assert!(!orch.ducking().is_ducked());
     assert_eq!(orch.ducking().current_backend_snapshot().unwrap(), initial_88);
 
-    orch.capture_device_mut()
-        .enqueue_simulated_microphone_pcm(&vec![0i16; 640]);
-    orch.press_ptt_and_open_stream(PTT_DEFAULT_HOTKEY, 5_000, 0x20, 0x20, 0x88, &mut gk, &mut avatar)
+    orch.capture_device_mut().restage_pcm(vec![0i16; 640]);
+    orch.press_ptt_and_open_stream(DEFAULT_PTT_HOTKEY_COMBO, 5_000, 0x20, 0x20, 0x88, &mut gk, avatar)
         .expect("press ptt silence test");
     assert!(orch.ducking().is_ducked());
 
     let _ = orch
         .pump_ptt_capture_chunk(
             640,
-            5_000 + VOICE_SILENCE_AUTO_STOP_MS + 100,
-            &mut avatar,
+            5_000 + DEFAULT_VOICE_SILENCE_TIMEOUT_MS + 100,
+            avatar,
             Some(&mut bridge),
         )
         .expect("pump silence");
@@ -348,9 +352,13 @@ fn test_optional_wake_word_is_disabled_by_default_with_zero_idle_cpu_and_respect
     assert_eq!(default_cfg.estimated_idle_cpu_pct(), 0.0);
 
     let mut gk = build_voice_gatekeeper_allow_all();
-    let mut avatar = ProductionAvatarRuntime::load_from_dir(avatar_assets_dir()).expect("avatar");
-    let mut secrets = InMemoryVoiceSecretAliasStore::new();
-    secrets.insert_alias("groq_stt_key", b"gsk_test_dummy_secret_value_4_2".to_vec());
+    let mut reloader = AvatarPackHotReloader::new(&avatar_assets_dir()).expect("avatar reloader");
+    let avatar = reloader.runtime_mut();
+    let secrets = InMemoryVoiceSecretVault::with_alias_secret(
+        GROQ_DEFAULT_KEY_ALIAS,
+        b"gsk_test_dummy_secret_value_4_2",
+    )
+    .expect("secret vault");
 
     let initial_80 = SystemAudioSnapshot::from_scalar(0.80, false);
     let duck_ctrl =
@@ -358,8 +366,8 @@ fn test_optional_wake_word_is_disabled_by_default_with_zero_idle_cpu_and_respect
 
     let mut orch = PttSttOrchestrator::with_transport(
         avatar_assets_dir(),
-        GroqSttConfig::default_with_consent(true),
-        WasapiCaptureDevice::new_loopback(),
+        GroqSttConfig::default().with_consent(true),
+        DeterministicFixtureCaptureDevice::new(),
         Box::new(secrets),
         Box::new(MockGroqOkTransport),
     )
@@ -367,7 +375,7 @@ fn test_optional_wake_word_is_disabled_by_default_with_zero_idle_cpu_and_respect
     .with_ducking_controller(duck_ctrl);
 
     let err_default = orch
-        .trigger_optional_wake_word_and_open_stream(0.95, 1_000, &mut gk, &mut avatar)
+        .trigger_optional_wake_word_and_open_stream(0.95, 1_000, &mut gk, avatar)
         .expect_err("wake word must be disabled by default");
     assert!(matches!(err_default, SttEngineError::UiFailure(_)));
     assert!(!orch.is_capture_stream_open());
@@ -375,24 +383,24 @@ fn test_optional_wake_word_is_disabled_by_default_with_zero_idle_cpu_and_respect
 
     orch.set_wake_word_enabled(true);
     let err_battery = orch
-        .trigger_optional_wake_word_and_open_stream(0.95, 1_100, &mut gk, &mut avatar)
+        .trigger_optional_wake_word_and_open_stream(0.95, 1_100, &mut gk, avatar)
         .expect_err("wake word must remain suspended on battery by default");
     assert!(matches!(err_battery, SttEngineError::UiFailure(_)));
     assert!(!orch.is_capture_stream_open());
 
     orch.set_wake_word_power_policy(VoicePowerPolicy {
-        on_battery: false,
+        on_battery_power: false,
         allow_wake_word_on_battery: false,
         gaming_mode_active: false,
     });
-    orch.trigger_optional_wake_word_and_open_stream(0.95, 1_200, &mut gk, &mut avatar)
+    orch.trigger_optional_wake_word_and_open_stream(0.95, 1_200, &mut gk, avatar)
         .expect("wake word allowed on AC when opted in");
     assert!(orch.is_capture_stream_open());
     assert!(orch.ducking().is_ducked());
     assert!((orch.ducking().current_backend_snapshot().unwrap().volume_scalar - 0.20).abs() < 1e-4);
 
     let _ = orch
-        .abort_and_cleanup(VoiceCancellationReason::UserPressedEscape, 1_400, &mut avatar, None)
+        .abort_and_cleanup(VoiceCancellationReason::UserPressedEscape, 1_400, avatar, None)
         .expect("cleanup wake word session");
     assert!(!orch.is_capture_stream_open());
     assert!(!orch.ducking().is_ducked());
@@ -402,7 +410,7 @@ fn test_optional_wake_word_is_disabled_by_default_with_zero_idle_cpu_and_respect
 #[test]
 fn test_island_media_controls_and_track_metadata_sanitization_over_ipc_bridge() {
     let mut gk = build_voice_gatekeeper_allow_all();
-    let mut bridge = WebView2IpcBridge::new("miku-island-media-token");
+    let mut bridge = WebView2IpcBridge::new().expect("ipc bridge");
 
     let initial_track = MediaTrackMetadata {
         title: "<script>alert('xss')</script> World Is Mine".to_string(),
@@ -422,10 +430,12 @@ fn test_island_media_controls_and_track_metadata_sanitization_over_ipc_bridge() 
         .expect("payload");
     match rendered {
         WebViewIpcPayloadV1::DomSafeTextRender {
-            target_element_id,
+            element_id,
             safe_text,
+            csp_enforced,
         } => {
-            assert_eq!(target_element_id, "miku-island-media-track");
+            assert_eq!(element_id, "miku-island-media-track");
+            assert!(csp_enforced);
             assert!(!safe_text.contains("<script>"));
             assert!(!safe_text.contains("<img"));
             assert!(safe_text.contains("&lt;script&gt;"));
@@ -433,6 +443,7 @@ fn test_island_media_controls_and_track_metadata_sanitization_over_ipc_bridge() 
         }
         other => panic!("expected DomSafeTextRender, got {:?}", other),
     }
+    assert!(bridge.pop_next_outbound_json().is_some());
 
     let after_toggle = media_ctrl
         .execute_transport_command(
@@ -462,8 +473,8 @@ fn test_island_media_controls_and_track_metadata_sanitization_over_ipc_bridge() 
         .expect("track");
     assert_eq!(after_next.position_ms, 0);
 
-    let deny_profile = ProjectProfile::new("deny-media-profile", ".");
-    let mut deny_gk = GatekeeperEngine::new(deny_profile, ".", 60).expect("deny gk");
+    let deny_profile = ProjectProfile::new("deny-media-profile", env!("CARGO_MANIFEST_DIR"), 30_000);
+    let mut deny_gk = GatekeeperEngine::new(deny_profile).expect("deny gk");
     assert!(media_ctrl
         .execute_transport_command(
             MediaTransportCommand::Stop,

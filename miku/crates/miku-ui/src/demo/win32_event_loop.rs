@@ -4,7 +4,7 @@ use crate::prelude::*;
 #[cfg(target_os = "windows")]
 pub(crate) mod win32_demo_runner {
     use super::*;
-    use super::win32_demo_ffi::*;
+    use crate::demo::win32_ffi_and_paint::win32_demo_ffi::*;
     use std::mem::{size_of, zeroed};
     use std::ptr::{null, null_mut};
     use std::thread;

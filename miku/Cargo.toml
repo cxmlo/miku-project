@@ -13,6 +13,9 @@ members = [
     "crates/miku-ui",
     "crates/miku-mcp",
     "crates/miku-skills",
+    "crates/miku-browser",
+    "crates/miku-mobile-core",
+    "crates/miku-tunnel",
 ]
 
 [workspace.package]
@@ -21,9 +24,21 @@ edition = "2021"
 license = "MIT"
 authors = ["Miku Desktop Orchestrator Contributors"]
 
+[profile.dev.package.miku-protocol]
+opt-level = 2
+
+[profile.dev.package.miku-ui]
+opt-level = 2
+
+[profile.dev.package.serde_json]
+opt-level = 2
+
+[profile.dev.package.toml]
+opt-level = 2
+
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = true
 codegen-units = 1
 panic = "abort"
 strip = true

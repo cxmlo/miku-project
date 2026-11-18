@@ -11,20 +11,49 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod ci_budget_gate;
 pub mod custom_agents_probe;
+pub mod desktop_daemon;
 pub mod doctor_config_and_budgets;
 pub mod doctor_probes;
 pub mod doctor_runner;
 pub mod hook_cmd;
+pub mod installer_updater;
 pub mod license_audit;
+pub mod live_gateway;
+pub mod live_ui_host;
 pub mod secrets_cmd;
+pub mod settings_window;
+pub mod unified_runtime;
+pub mod win32_tray;
 
+#[cfg(test)]
+mod tests_agent_tools;
+#[cfg(test)]
+mod tests_desktop_daemon;
+#[cfg(test)]
+mod tests_link_and_cockpit;
+#[cfg(test)]
+mod tests_live_gateway;
+#[cfg(test)]
+mod tests_settings_8_6;
+#[cfg(test)]
+mod tests_unified_e2e;
+
+pub use ci_budget_gate::*;
 pub use custom_agents_probe::*;
+pub use desktop_daemon::*;
 pub use doctor_config_and_budgets::*;
 pub use doctor_probes::*;
 pub use doctor_runner::*;
 pub use hook_cmd::*;
+pub use installer_updater::*;
+pub use live_gateway::*;
+pub use live_ui_host::*;
 pub use secrets_cmd::*;
+pub use settings_window::*;
+pub use unified_runtime::*;
+pub use win32_tray::*;
 
 pub const WEBVIEW2_RUNTIME_GUID: &str = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 pub const DOCTOR_SCHEMA_VERSION_V0: &str = "miku.doctor.v0";

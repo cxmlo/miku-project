@@ -495,6 +495,99 @@ pub fn constant_time_token_eq(expected: &str, provided: &str) -> bool {
 // 3. Self-Contained FIPS 180-4 SHA-256 Helper (Zero External C Deps)
 // ============================================================================
 
+// ============================================================================
+// 3. Shared Vision & PC Control Contracts
+// ============================================================================
+
+/// Coordinate transformation describing captured screen regions and multi-DPI mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CaptureTransform {
+    pub origin_virtual_x: i32,
+    pub origin_virtual_y: i32,
+    pub width_px: u32,
+    pub height_px: u32,
+    pub dpi_scale: f32,
+}
+
+impl Default for CaptureTransform {
+    fn default() -> Self {
+        Self {
+            origin_virtual_x: 0,
+            origin_virtual_y: 0,
+            width_px: 1920,
+            height_px: 1080,
+            dpi_scale: 1.0,
+        }
+    }
+}
+
+impl CaptureTransform {
+    pub fn new(
+        origin_virtual_x: i32,
+        origin_virtual_y: i32,
+        width_px: u32,
+        height_px: u32,
+        dpi_scale: f32,
+    ) -> Self {
+        Self {
+            origin_virtual_x,
+            origin_virtual_y,
+            width_px,
+            height_px,
+            dpi_scale: if dpi_scale <= 0.0 { 1.0 } else { dpi_scale },
+        }
+    }
+
+    /// Converts normalized image coordinates in [0.0, 1.0] to desktop virtual screen coordinates.
+    pub fn screen_coords_to_virtual(&self, x_norm: f32, y_norm: f32) -> (i32, i32) {
+        let vx = self.origin_virtual_x + (x_norm * self.width_px as f32) as i32;
+        let vy = self.origin_virtual_y + (y_norm * self.height_px as f32) as i32;
+        (vx, vy)
+    }
+
+    /// Converts LLM-normalized [0.0, 1000.0] screen coordinates into desktop virtual coordinates.
+    pub fn normalized_1000_to_virtual(&self, x_1000: f32, y_1000: f32) -> (i32, i32) {
+        let nx = (x_1000 / 1000.0).clamp(0.0, 1.0);
+        let ny = (y_1000 / 1000.0).clamp(0.0, 1.0);
+        let px = (nx * self.width_px as f32).round() as i32;
+        let py = (ny * self.height_px as f32).round() as i32;
+        (self.origin_virtual_x + px, self.origin_virtual_y + py)
+    }
+
+    /// Converts pixel offsets relative to this capture frame to desktop virtual coordinates.
+    pub fn pixel_to_virtual(&self, px: i32, py: i32) -> (i32, i32) {
+        let vx = self.origin_virtual_x + (px as f32 * self.dpi_scale) as i32;
+        let vy = self.origin_virtual_y + (py as f32 * self.dpi_scale) as i32;
+        (vx, vy)
+    }
+}
+
+/// Standard zero-dependency Base64 encoder for image payloads and HTTP headers.
+pub fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        out.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(triple & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
 pub mod sha256;
 pub use sha256::*;
 

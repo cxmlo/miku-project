@@ -22,6 +22,7 @@ pub mod claude_adapter;
 pub mod claude_tracker_and_telemetry;
 pub mod custom_agents;
 pub mod harness;
+pub mod routines;
 pub mod secrets;
 pub mod session_manager;
 pub mod session_queue;

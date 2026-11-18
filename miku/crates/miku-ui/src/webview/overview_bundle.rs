@@ -327,6 +327,7 @@ pub fn compose_avatar_layer_stack_from_rig(
 pub struct OverviewSceneBundle {
     pub virtual_url: String,
     pub html_content: String,
+    pub script_content: String,
     pub byte_len: usize,
     pub csp_header: String,
     pub expanded_width_px: u32,
@@ -357,16 +358,21 @@ impl OverviewSceneBundle {
             )));
         }
         validate_webview_csp_policy(&self.csp_header)?;
-        let lower = self.html_content.to_ascii_lowercase();
-        for forbidden in ["innerhtml", "outerhtml", "document.write", "eval(", "http://"] {
-            if lower.contains(forbidden) {
-                return Err(UiError::CspViolation(format!(
-                    "overview bundle contains forbidden pattern '{}'",
-                    forbidden
-                )));
+        for (part_name, src) in [
+            ("html_content", self.html_content.as_str()),
+            ("script_content", self.script_content.as_str()),
+        ] {
+            let lower = src.to_ascii_lowercase();
+            for forbidden in ["innerhtml", "outerhtml", "document.write", "eval(", "http://"] {
+                if lower.contains(forbidden) {
+                    return Err(UiError::CspViolation(format!(
+                        "overview bundle {} contains forbidden pattern '{}'",
+                        part_name, forbidden
+                    )));
+                }
             }
         }
-        if !self.html_content.contains("textContent") {
+        if !self.html_content.contains("textContent") || !self.script_content.contains("textContent") {
             return Err(UiError::CspViolation(
                 "overview bundle must render dynamic text strictly via textContent".to_string(),
             ));
@@ -395,130 +401,45 @@ pub fn build_overview_scene_bundle(avatar_dir: &Path) -> Result<OverviewSceneBun
     let (layers, accessories) =
         compose_avatar_layer_stack(avatar_dir, AvatarMood::Idle, &["crown", "scarf"])?;
 
-    let mut layers_markup = String::with_capacity(1024);
-    for layer in &layers {
-        layers_markup.push_str(&format!(
-            "<g id=\"miku-layer-{}\" data-z=\"{}\" data-svg=\"{}\" data-visible=\"{}\"></g>",
-            layer.id, layer.z, layer.svg_source, layer.visible
-        ));
-    }
+    let layers_markup = super::overview_svg_assets::build_avatar_layers_markup(avatar_dir, &layers);
+    let styles_markup = super::overview_ui_styles::build_overview_styles(
+        &tokens.island.background,
+        tokens.island.expanded.width_default,
+        OVERVIEW_EXPANDED_HEIGHT_PX,
+        tokens.island.expanded.radius_bottom,
+        tokens.scale.hover_open_scene.k,
+        tokens.scale.hover_open_scene.body_px,
+    );
+    let body_markup = super::overview_ui_panels::build_overview_html_body(&layers_markup);
+    let script_content = super::overview_ui_script::build_overview_script();
 
     let html_content = format!(
-        r#"<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="{csp}">
-<title>Miku Island Overview</title>
-<style>
-:root {{
-  --s0: {bg};
-  --s1: #0E0F11;
-  --card: #17181C;
-  --line: #24262C;
-  --text-primary: #F5F5F7;
-  --text-muted: #8E919A;
-  --accent-blue: #3B9EFF;
-  --accent-ok: #30D158;
-  --accent-err: #FF453A;
-  --island-w: {w}px;
-  --island-h: {h}px;
-  --island-radius: {r}px;
-  --avatar-k: {k:.2};
-  --avatar-body-px: {body_px:.1}px;
-}}
-* {{ box-sizing: border-box; margin: 0; padding: 0; user-select: none; }}
-body {{
-  width: var(--island-w);
-  height: var(--island-h);
-  background: var(--s0);
-  color: var(--text-primary);
-  font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-  border-bottom-left-radius: var(--island-radius);
-  border-bottom-right-radius: var(--island-radius);
-  overflow: hidden;
-  display: grid;
-  grid-template-columns: 168px 1fr;
-  gap: 16px;
-  padding: 18px 22px;
-}}
-#miku-avatar-stage {{
-  background: var(--s1);
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}}
-#miku-overview-panel {{
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}}
-</style>
-</head>
-<body data-scene="overview" data-origin="https://miku.local/index.html">
-  <section id="miku-avatar-stage">
-    <svg id="miku-avatar-svg" viewBox="0 0 128 128" width="128" height="128">{layers}</svg>
-    <span id="miku-avatar-mood-label">idle</span>
-  </section>
-  <section id="miku-overview-panel">
-    <header>
-      <h1 id="miku-overview-title">Miku Orchestrator</h1>
-      <p id="miku-overview-status">Ready on https://miku.local</p>
-    </header>
-    <div id="miku-overview-metrics">
-      <span id="miku-overview-ram-badge">RAM <= 30 MB</span>
-      <span id="miku-overview-ipc-badge">IPC RTT < 2 ms</span>
-    </div>
-  </section>
-<script>
-(function() {{
-  "use strict";
-  function applySafeText(id, text) {{
-    var el = document.getElementById(id);
-    if (el) {{ el.textContent = String(text); }}
-  }}
-  if (window.chrome && window.chrome.webview) {{
-    window.chrome.webview.addEventListener("message", function(ev) {{
-      try {{
-        var msg = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
-        if (msg && msg.payload && msg.payload.kind === "dom_safe_text_render") {{
-          applySafeText(msg.payload.data.element_id, msg.payload.data.safe_text);
-        }}
-      }} catch (_err) {{}}
-    }});
-  }}
-}})();
-</script>
-</body>
-</html>"#,
+        "<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\">\n<title>Miku Island Overview</title>\n{styles}\n</head>\n{body}\n<script src=\"/app.js\" defer></script>\n</html>",
         csp = MIKU_WEBVIEW_CSP_HEADER,
-        bg = tokens.island.background,
-        w = tokens.island.expanded.width_default,
-        h = OVERVIEW_EXPANDED_HEIGHT_PX,
-        r = tokens.island.expanded.radius_bottom,
-        k = tokens.scale.hover_open_scene.k,
-        body_px = tokens.scale.hover_open_scene.body_px,
-        layers = layers_markup,
+        styles = styles_markup,
+        body = body_markup,
     );
 
-    let byte_len = html_content.len();
-    let has_external_cdn_links = html_content.contains("http://")
-        || html_content
-            .split("https://")
-            .skip(1)
-            .any(|seg| !seg.starts_with("miku.local"));
+    let byte_len = html_content.len() + script_content.len();
+    let has_external_cdn_links = [html_content.as_str(), script_content.as_str()]
+        .iter()
+        .any(|chunk| {
+            chunk.contains("http://")
+                || chunk
+                    .split("https://")
+                    .skip(1)
+                    .any(|seg| !seg.starts_with("miku.local"))
+        });
+
+    let mut hash_buf = Vec::with_capacity(byte_len);
+    hash_buf.extend_from_slice(html_content.as_bytes());
+    hash_buf.extend_from_slice(script_content.as_bytes());
 
     let bundle = OverviewSceneBundle {
         virtual_url: OVERVIEW_VIRTUAL_INDEX_URL.to_string(),
-        bundle_sha256: sha256_hex(html_content.as_bytes()),
+        bundle_sha256: sha256_hex(&hash_buf),
         html_content,
+        script_content,
         byte_len,
         csp_header: MIKU_WEBVIEW_CSP_HEADER.to_string(),
         expanded_width_px: tokens.island.expanded.width_default,

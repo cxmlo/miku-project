@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es" class="standalone-stage">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;">
+  <title>Miku · Muñeco Modular</title>
+  <link rel="stylesheet" href="/shared/theme.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body {
+      height: 100%;
+      background: #0b0c10;
+      color: #fff;
+      font: 13px/1.4 var(--font-sans, system-ui, sans-serif);
+      -webkit-font-smoothing: antialiased;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 20px;
+    }
+    #mk-playground-wrap {
+      width: 220px;
+      height: 220px;
+      border-radius: 28px;
+      background: radial-gradient(circle at 50% 45%, rgba(59,158,255,0.16), #08090d 72%);
+      border: 1px solid rgba(255,255,255,0.1);
+      display: grid;
+      place-items: center;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.65);
+    }
+    #mk { width: 200px; height: 200px; display: block; }
+    .panel { display: flex; flex-direction: column; gap: 10px; align-items: center; max-width: 620px; }
+    .row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; }
+    button {
+      border: 1px solid rgba(255,255,255,0.1);
+      font: inherit;
+      font-size: 12px;
+      color: #fff;
+      background: #22252d;
+      border-radius: 99px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: transform .2s var(--spr, ease), background .2s;
+    }
+    button:hover { background: #313540; transform: scale(1.05); }
+    button:active { transform: scale(.94); }
+    button.on { background: var(--ac, #3B9EFF); color: var(--acx, #111); font-weight: 600; border-color: transparent; }
+    label { display: inline-flex; align-items: center; gap: 8px; color: #cbd5e1; }
+    input[type=color] { width: 32px; height: 26px; border: 0; background: none; padding: 0; cursor: pointer; }
+    .hint { color: #8e919a; font-size: 11.5px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="mk-playground-wrap">
+    <canvas id="mk" width="400" height="400"></canvas>
+  </div>
+  <div class="panel">
+    <div class="row" id="states"></div>
+    <div class="row" id="outfits"></div>
+    <div class="row">
+      <label>Color <input type="color" id="col" value="#ffffff"></label>
+      <button type="button" id="toggleTails">Coletas: OFF</button>
+    </div>
+    <p class="hint">Puedes editar <code>mascot/mascot.config.json</code> o reemplazar <code>mascot/mascot.js</code> sin afectar la isla.</p>
+  </div>
+  <script src="/shared/mascot/mascot.js"></script>
+  <script src="/shared/mascot/playground.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+namespace miku_mobile_core {
+    string compute_req_hash_v1(string agent, string capability, string canonical_target, string canonical_args);
+};
+
+dictionary DisplayedPermissionCard {
+    string req_hash;
+    string agent;
+    string capability;
+    string target;
+    string args;
+    u32 ttl_sec;
+    u64 received_at_ms;
+    boolean pc_only;
+};
+
+dictionary BiometricProof {
+    boolean verified;
+    string auth_method;
+    string bound_req_hash;
+    u64 verified_at_ms;
+};
+
+interface MobileCoreClient {
+    constructor(string session_id, string device_id);
+    string decide_permission_json(string request_json);
+    string build_kill_switch_frame_json(string msg_id);
+    string parity_matrix_json();
+};

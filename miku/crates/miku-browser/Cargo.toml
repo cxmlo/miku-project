@@ -1,0 +1,14 @@
+[package]
+name = "miku-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+miku-gatekeeper = { path = "../miku-gatekeeper" }
+miku-protocol = { path = "../miku-protocol" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.43", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+

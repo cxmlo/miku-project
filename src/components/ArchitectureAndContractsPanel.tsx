@@ -259,7 +259,7 @@ Móvil ─(LAN/túnel)────►│ miku-mcp (host+cliente)    miku-gatekee
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-7 overflow-x-auto">
+          <div className="lg:col-span-7 min-w-0 overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400">
@@ -306,7 +306,7 @@ Móvil ─(LAN/túnel)────►│ miku-mcp (host+cliente)    miku-gatekee
             </table>
           </div>
 
-          <div className="lg:col-span-5 bg-slate-950 border border-slate-800 rounded-lg p-4 flex flex-col justify-between space-y-3">
+          <div className="lg:col-span-5 min-w-0 bg-slate-950 border border-slate-800 rounded-lg p-4 flex flex-col justify-between space-y-3">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs font-mono text-slate-400">
                 <span>Trama seleccionada: {selectedMessage.msgType}</span>

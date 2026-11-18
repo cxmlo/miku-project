@@ -1,0 +1,106 @@
+/* ==========================================================================
+   Miku Dynamic Island — Archivo de Tema Personalizable (theme.css)
+   Edita estas variables (o coloca una copia en %LOCALAPPDATA%\Miku\ui\theme.css)
+   para cambiar colores, tipografías, radios, resplandores y física de animación
+   sin modificar la lógica ni el muñeco.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/shared/fonts/nunito-500-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/shared/fonts/nunito-500-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/shared/fonts/nunito-700-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/shared/fonts/nunito-700-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/shared/fonts/nunito-800-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/shared/fonts/nunito-800-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* Paleta principal monocromática (cxmlo/miku) */
+  --ac: #f5f5f7;
+  --acx: #111111;
+  --ac-soft: rgba(245, 245, 247, 0.12);
+  --ac-border: rgba(245, 245, 247, 0.28);
+  --ac-glow: rgba(245, 245, 247, 0.18);
+  --sky: #e4e6eb;
+  --mut: rgba(235, 235, 245, 0.52);
+  --coral: #FF7A70;
+  --ok: #30D158;
+  --teal: #2DD4A0;
+  --warn: #FFB300;
+  --danger: #FF453A;
+
+  /* Superficies y cristal */
+  --stage-bg: transparent;
+  --island-bg: #050609;
+  --island-alpha: 0.96;
+  --isl-scale: 1;
+  --settings-bg: #000000;
+  --island-border: rgba(255, 255, 255, 0.08);
+  --island-ear-border: rgba(255, 255, 255, 0.09);
+  --island-shadow: 0 2px 10px rgba(0, 0, 0, 0.48);
+  --card: #0e0f11;
+  --card-alt: #17181b;
+  --fld: #121316;
+  --line: rgba(255, 255, 255, 0.08);
+  --gl: rgba(255, 255, 255, 0.1);
+
+  /* Resplandor dinámico por estado */
+  --vc: #a88cff;
+
+  /* Geometría y curvas de resorte */
+  --island-radius-compact: 24px;
+  --island-radius-open: 32px;
+  --card-radius: 24px;
+  --spr: cubic-bezier(.3, 1.35, .5, 1);
+  --ease: cubic-bezier(.16, 1, .3, 1);
+
+  /* Tipografía local del sistema + Nunito MIT bundle (sin CDN externo) */
+  --font-sans: 'Nunito', -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Fira Code", ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+/* Fondo opcional cuando se abre fuera del overlay transparente (preview navegador) */
+html.standalone-stage,
+html.standalone-stage body {
+  background: radial-gradient(circle at 50% 0%, #14151a 0%, #07080b 55%, #000000 100%);
+}

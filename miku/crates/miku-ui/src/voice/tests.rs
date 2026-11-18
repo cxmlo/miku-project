@@ -316,3 +316,77 @@ use crate::prelude::*;
         assert!(outbound_dom_json.contains("&lt;img"));
     }
 
+    #[test]
+    fn test_voice_stt_engines_transcript_events_and_sapi_recognizer() {
+        // 1. Frozen contract engine variants and serialization
+        assert_eq!(VoiceSttEngine::Off.as_str(), "off");
+        assert_eq!(VoiceSttEngine::BrowserWebspeech.as_str(), "browser_webspeech");
+        assert_eq!(VoiceSttEngine::GroqWhisper.as_str(), "groq_whisper");
+        assert_eq!(VoiceSttEngine::LocalSapi.as_str(), "local_sapi");
+
+        assert_eq!(VoiceSttEngine::from_str_loose("browser_webspeech"), VoiceSttEngine::BrowserWebspeech);
+        assert_eq!(VoiceSttEngine::from_str_loose("groq_whisper"), VoiceSttEngine::GroqWhisper);
+        assert_eq!(VoiceSttEngine::from_str_loose("local_sapi"), VoiceSttEngine::LocalSapi);
+        assert_eq!(VoiceSttEngine::from_str_loose("off"), VoiceSttEngine::Off);
+        assert_eq!(VoiceSttEngine::from_str_loose("unknown"), VoiceSttEngine::Off);
+
+        assert!(!VoiceSttEngine::Off.is_enabled());
+        assert!(VoiceSttEngine::BrowserWebspeech.is_enabled());
+        assert!(VoiceSttEngine::GroqWhisper.is_enabled());
+        assert!(VoiceSttEngine::LocalSapi.is_enabled());
+
+        // 2. Frozen Gate 0 VoiceSttSettings defaults
+        let settings = VoiceSttSettings::default();
+        assert!(!settings.voice_stt_enabled);
+        assert_eq!(settings.voice_stt_engine, VoiceSttEngine::Off);
+        assert!(!settings.voice_auto_send);
+
+        let json_settings = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(json_settings.contains("\"voice_stt_enabled\":false"));
+        assert!(json_settings.contains("\"voice_stt_engine\":\"off\""));
+        assert!(json_settings.contains("\"voice_auto_send\":false"));
+
+        // 3. Frozen Gate 0 VoiceTranscriptEvent WebSocket event
+        let transcript = VoiceTranscriptEvent::new("hola miku", true, "local_sapi");
+        let val = transcript.to_json_value();
+        assert_eq!(val["type"], "voice_transcript");
+        assert_eq!(val["text"], "hola miku");
+        assert_eq!(val["is_final"], true);
+        assert_eq!(val["engine"], "local_sapi");
+
+        // 4. Local SAPI Recognizer with simulated fallback and active PCM
+        let recognizer = LocalSapiRecognizer::new("es-ES").with_simulated_fallback("abrir terminal");
+        assert_eq!(recognizer.language_tag, "es-ES");
+
+        // Silence yields empty transcript
+        let silence_pcm = vec![0i16; 640];
+        let silent_res = recognizer.recognize_pcm_samples(&silence_pcm, 16000, true).expect("silent");
+        assert!(silent_res.transcript.is_empty());
+
+        // Active speech yields transcription
+        let active_pcm: Vec<i16> = (0..640)
+            .map(|i| (((i as f64) * 0.1).sin() * 12000.0) as i16)
+            .collect();
+        let active_res = recognizer.recognize_pcm_samples(&active_pcm, 16000, true).expect("active");
+        assert_eq!(active_res.transcript, "abrir terminal");
+        assert_eq!(active_res.engine, VoiceSttEngine::LocalSapi);
+        assert!(active_res.is_final);
+
+        let evt = recognizer.to_transcript_event(&active_res);
+        assert_eq!(evt.event_type, "voice_transcript");
+        assert_eq!(evt.text, "abrir terminal");
+        assert_eq!(evt.engine, "local_sapi");
+
+        // 5. Audio ducking integration test: duck to 20% and restore
+        let sim_backend = SimulatedAudioMediaBackend::new(0.80, false);
+        let orig = sim_backend.read_volume_snapshot().expect("read");
+        assert!((orig.volume_scalar - 0.80).abs() < 1e-3);
+
+        let mut duck_ctrl = AudioDuckingController::new(Box::new(sim_backend));
+        let receipt = duck_ctrl.engage_ducking(1000).expect("duck");
+        assert_eq!(receipt.ducked_volume, DEFAULT_AUDIO_DUCKING_TARGET_LEVEL);
+
+        let restored = duck_ctrl.restore_original_volume(1500).expect("restore").expect("receipt");
+        assert!((restored.restored_snapshot.volume_scalar - 0.80).abs() < 1e-3);
+    }
+

@@ -20,6 +20,13 @@ use miku_gatekeeper::{AuditEntry, GENESIS_AUDIT_HASH};
 use miku_protocol::sha256_hex;
 use serde::{Deserialize, Serialize};
 
+pub mod sqlite_wal_backend;
+#[cfg(target_os = "windows")]
+mod sqlite_wal_ffi;
+
+#[cfg(test)]
+mod tests_wal_bench;
+
 pub const DEFAULT_BUSY_TIMEOUT_MS: u32 = 5_000;
 pub const SCHEMA_VERSION_V1: u32 = 1;
 
@@ -233,7 +240,7 @@ impl std::fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct DatabaseSnapshot {
+pub(crate) struct DatabaseSnapshot {
     schema_version: u32,
     migrated_tables: BTreeSet<String>,
     sessions: BTreeMap<String, SessionRecord>,
@@ -259,6 +266,7 @@ struct StorageEngine {
     in_flight_tx: Option<DatabaseSnapshot>,
     wal_frame_seq: u64,
     migration_runs: u64,
+    sqlite_backend: Option<sqlite_wal_backend::NativeSqliteWalBackend>,
 }
 
 impl StorageEngine {
@@ -277,6 +285,7 @@ impl StorageEngine {
             in_flight_tx: None,
             wal_frame_seq: 0,
             migration_runs: 0,
+            sqlite_backend: None,
         };
         engine.execute_pragma_sql(SQL_PRAGMA_INIT_WAL)?;
         Ok(engine)
@@ -293,41 +302,68 @@ impl StorageEngine {
         engine.db_path = Some(path.to_path_buf());
         engine.wal_path = Some(wal_path.clone());
 
-        if path.exists() {
+        let mut legacy_snapshot_to_migrate: Option<DatabaseSnapshot> = None;
+        let is_existing_sqlite = if path.exists() {
             let mut raw = Vec::new();
             let mut file =
                 fs::File::open(path).map_err(|e| StorageError::IoError(e.to_string()))?;
             file.read_to_end(&mut raw)
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
-            if !raw.is_empty() {
+            if raw.starts_with(b"SQLite format 3\0") {
+                true
+            } else if !raw.is_empty() {
                 let snap: DatabaseSnapshot = serde_json::from_slice(&raw)
                     .map_err(|e| StorageError::CorruptedWalFrame(e.to_string()))?;
-                engine.committed = snap;
+                legacy_snapshot_to_migrate = Some(snap);
+                false
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if !is_existing_sqlite && wal_path.exists() {
+            if let Ok(raw) = fs::read_to_string(&wal_path) {
+                if raw.trim_start().starts_with('{') {
+                    for line in raw.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        let frame: WalFrameRecord = serde_json::from_str(trimmed)
+                            .map_err(|e| StorageError::CorruptedWalFrame(e.to_string()))?;
+                        let snapshot_bytes = serde_json::to_vec(&frame.snapshot)
+                            .map_err(|e| StorageError::CorruptedWalFrame(e.to_string()))?;
+                        let computed = sha256_hex(&snapshot_bytes);
+                        if computed != frame.payload_sha256 {
+                            return Err(StorageError::CorruptedWalFrame(format!(
+                                "WAL frame {} SHA-256 mismatch: expected {}, got {}",
+                                frame.frame_seq, frame.payload_sha256, computed
+                            )));
+                        }
+                        engine.wal_frame_seq = frame.frame_seq;
+                        legacy_snapshot_to_migrate = Some(frame.snapshot);
+                    }
+                    let _ = fs::remove_file(&wal_path);
+                }
             }
         }
 
-        if wal_path.exists() {
-            let raw =
-                fs::read_to_string(&wal_path).map_err(|e| StorageError::IoError(e.to_string()))?;
-            for line in raw.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let frame: WalFrameRecord = serde_json::from_str(trimmed)
-                    .map_err(|e| StorageError::CorruptedWalFrame(e.to_string()))?;
-                let snapshot_bytes = serde_json::to_vec(&frame.snapshot)
-                    .map_err(|e| StorageError::CorruptedWalFrame(e.to_string()))?;
-                let computed = sha256_hex(&snapshot_bytes);
-                if computed != frame.payload_sha256 {
-                    return Err(StorageError::CorruptedWalFrame(format!(
-                        "WAL frame {} SHA-256 mismatch: expected {}, got {}",
-                        frame.frame_seq, frame.payload_sha256, computed
-                    )));
-                }
-                engine.wal_frame_seq = frame.frame_seq;
-                engine.committed = frame.snapshot;
+        if let Some(legacy_snap) = legacy_snapshot_to_migrate.take() {
+            if path.exists() {
+                let _ = fs::remove_file(path);
             }
+            let backend = sqlite_wal_backend::NativeSqliteWalBackend::open(Some(path))?;
+            backend.import_snapshot_atomically(&legacy_snap)?;
+            engine.committed = legacy_snap;
+            engine.sqlite_backend = Some(backend);
+        } else {
+            let backend = sqlite_wal_backend::NativeSqliteWalBackend::open(Some(path))?;
+            if is_existing_sqlite {
+                engine.committed = backend.load_full_snapshot()?;
+            }
+            engine.sqlite_backend = Some(backend);
         }
 
         Ok(engine)
@@ -409,6 +445,12 @@ impl StorageEngine {
         if self.in_flight_tx.is_some() {
             return Ok(());
         }
+        // Incremental SQLite WAL mode performs direct O(1)/O(log N) page appends per mutation
+        // without serializing the entire DatabaseSnapshot.
+        if self.sqlite_backend.is_some() {
+            self.wal_frame_seq += 1;
+            return Ok(());
+        }
         let Some(ref wal_path) = self.wal_path else {
             return Ok(());
         };
@@ -435,6 +477,9 @@ impl StorageEngine {
     fn checkpoint_wal(&mut self) -> Result<(), StorageError> {
         if self.in_flight_tx.is_some() {
             return Err(StorageError::ActiveTransactionAlreadyOpen);
+        }
+        if let Some(ref backend) = self.sqlite_backend {
+            return backend.checkpoint_wal();
         }
         if let Some(ref db_path) = self.db_path {
             let bytes = serde_json::to_vec(&self.committed)
@@ -472,8 +517,54 @@ impl SingleThreadStoragePool {
         })
     }
 
+    /// Imports an in-memory legacy `DatabaseSnapshot` JSON payload atomically into SQLite WAL + FTS5.
+    pub fn migrate_legacy_json_bytes(
+        &self,
+        raw_snapshot_json: &[u8],
+    ) -> Result<usize, StorageError> {
+        let snap: DatabaseSnapshot = serde_json::from_slice(raw_snapshot_json)
+            .map_err(|e| StorageError::CorruptedWalFrame(e.to_string()))?;
+        let count = snap.sessions.len()
+            + snap.turns.len()
+            + snap.audit_entries.len()
+            + snap.approved_profiles.len()
+            + snap.fts_documents.len();
+        let mut eng = self.inner.borrow_mut();
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.import_snapshot_atomically(&snap)?;
+        }
+        eng.committed = snap;
+        for tbl in [
+            "sessions",
+            "conversation_turns",
+            "audit_chain_entries",
+            "approved_profiles",
+            "memory_fts5",
+        ] {
+            eng.committed.migrated_tables.insert(tbl.to_string());
+        }
+        Ok(count)
+    }
+
     pub fn pragma_state(&self) -> PragmaState {
         self.inner.borrow().pragmas.clone()
+    }
+
+    pub fn backend_kind(&self) -> &'static str {
+        if self.inner.borrow().sqlite_backend.is_some() {
+            sqlite_wal_backend::sqlite_wal_backend_name()
+        } else {
+            "in_memory_snapshot"
+        }
+    }
+
+    pub fn sqlite_journal_mode(&self) -> Result<String, StorageError> {
+        let eng = self.inner.borrow();
+        if let Some(ref b) = eng.sqlite_backend {
+            b.journal_mode_query()
+        } else {
+            Ok(eng.pragmas.journal_mode.clone())
+        }
     }
 
     pub fn run_migrations(&self) -> Result<u32, StorageError> {
@@ -508,6 +599,9 @@ impl SingleThreadStoragePool {
             if eng.in_flight_tx.is_some() {
                 return Err(StorageError::ActiveTransactionAlreadyOpen);
             }
+            if let Some(ref backend) = eng.sqlite_backend {
+                backend.begin_immediate()?;
+            }
             eng.in_flight_tx = Some(eng.committed.clone());
         }
         Ok(TransactionGuard {
@@ -524,14 +618,18 @@ impl SingleThreadStoragePool {
         }
         let mut eng = self.inner.borrow_mut();
         eng.ensure_table_migrated("sessions")?;
-        let snap = eng.active_snapshot_mut();
-        if snap.sessions.contains_key(&record.session_id) {
+        if eng.active_snapshot().sessions.contains_key(&record.session_id) {
             return Err(StorageError::PrimaryKeyConflict {
                 table: "sessions".to_string(),
                 key: record.session_id,
             });
         }
-        snap.sessions.insert(record.session_id.clone(), record);
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.insert_session(&record)?;
+        }
+        eng.active_snapshot_mut()
+            .sessions
+            .insert(record.session_id.clone(), record);
         eng.persist_wal_frame_if_needed()
     }
 
@@ -557,13 +655,17 @@ impl SingleThreadStoragePool {
         eng.ensure_table_migrated("sessions")?;
         eng.ensure_table_migrated("conversation_turns")?;
         let foreign_keys_on = eng.pragmas.foreign_keys;
-        let snap = eng.active_snapshot_mut();
-        if snap.sessions.remove(session_id).is_none() {
+        if !eng.active_snapshot().sessions.contains_key(session_id) {
             return Err(StorageError::NotFound {
                 table: "sessions".to_string(),
                 key: session_id.to_string(),
             });
         }
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.delete_session(session_id)?;
+        }
+        let snap = eng.active_snapshot_mut();
+        snap.sessions.remove(session_id);
         let mut cascaded = 0usize;
         if foreign_keys_on {
             let before = snap.turns.len();
@@ -584,20 +686,27 @@ impl SingleThreadStoragePool {
         eng.ensure_table_migrated("sessions")?;
         eng.ensure_table_migrated("conversation_turns")?;
         let fk_on = eng.pragmas.foreign_keys;
-        let snap = eng.active_snapshot_mut();
-        if fk_on && !snap.sessions.contains_key(&turn.session_id) {
-            return Err(StorageError::ForeignKeyViolation {
-                table: "conversation_turns".to_string(),
-                parent_key: turn.session_id,
-            });
+        {
+            let snap = eng.active_snapshot();
+            if fk_on && !snap.sessions.contains_key(&turn.session_id) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "conversation_turns".to_string(),
+                    parent_key: turn.session_id,
+                });
+            }
+            if snap.turns.contains_key(&turn.turn_id) {
+                return Err(StorageError::PrimaryKeyConflict {
+                    table: "conversation_turns".to_string(),
+                    key: turn.turn_id,
+                });
+            }
         }
-        if snap.turns.contains_key(&turn.turn_id) {
-            return Err(StorageError::PrimaryKeyConflict {
-                table: "conversation_turns".to_string(),
-                key: turn.turn_id,
-            });
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.insert_turn(&turn)?;
         }
-        snap.turns.insert(turn.turn_id.clone(), turn);
+        eng.active_snapshot_mut()
+            .turns
+            .insert(turn.turn_id.clone(), turn);
         eng.persist_wal_frame_if_needed()
     }
 
@@ -656,7 +765,10 @@ impl SingleThreadStoragePool {
                 entry.seq, recomputed, entry.entry_hash
             )));
         }
-        snap.audit_entries.push(entry);
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.append_audit_entry(&entry)?;
+        }
+        eng.active_snapshot_mut().audit_entries.push(entry);
         eng.persist_wal_frame_if_needed()
     }
 
@@ -744,6 +856,9 @@ impl SingleThreadStoragePool {
             approved_by: approved_by.to_string(),
             approved_at_ms,
         };
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.upsert_approved_profile(&rec)?;
+        }
         eng.active_snapshot_mut()
             .approved_profiles
             .insert(canonical_key, rec.clone());
@@ -759,6 +874,9 @@ impl SingleThreadStoragePool {
         }
         let mut eng = self.inner.borrow_mut();
         eng.ensure_table_migrated("memory_fts5")?;
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.upsert_fts5_doc(&doc)?;
+        }
         eng.active_snapshot_mut()
             .fts_documents
             .insert(doc.doc_id.clone(), doc);
@@ -774,6 +892,9 @@ impl SingleThreadStoragePool {
             .remove(doc_id)
             .is_some();
         if removed {
+            if let Some(ref backend) = eng.sqlite_backend {
+                backend.delete_fts5_doc(doc_id)?;
+            }
             eng.persist_wal_frame_if_needed()?;
         }
         Ok(removed)
@@ -784,6 +905,9 @@ impl SingleThreadStoragePool {
         eng.ensure_table_migrated("memory_fts5")?;
         let count = eng.active_snapshot().fts_documents.len();
         if count > 0 {
+            if let Some(ref backend) = eng.sqlite_backend {
+                backend.clear_fts5_docs()?;
+            }
             eng.active_snapshot_mut().fts_documents.clear();
             eng.persist_wal_frame_if_needed()?;
         }
@@ -823,6 +947,21 @@ impl SingleThreadStoragePool {
         let docs_map = &eng.active_snapshot().fts_documents;
         if docs_map.is_empty() {
             return Ok(Vec::new());
+        }
+
+        if cfg!(target_os = "windows") {
+            if let Some(ref backend) = eng.sqlite_backend {
+                if let Ok(native_hits) = backend.search_fts5(&query_terms, limit.saturating_mul(4)) {
+                    let filtered: Vec<Fts5SearchHit> = native_hits
+                        .into_iter()
+                        .filter(|h| accept_doc_id(&h.doc_id))
+                        .take(limit)
+                        .collect();
+                    if !filtered.is_empty() {
+                        return Ok(filtered);
+                    }
+                }
+            }
         }
 
         let n_docs = docs_map.len() as f64;
@@ -929,6 +1068,9 @@ impl TransactionGuard {
         let Some(staged) = eng.in_flight_tx.take() else {
             return Err(StorageError::NoActiveTransaction);
         };
+        if let Some(ref backend) = eng.sqlite_backend {
+            backend.commit()?;
+        }
         eng.committed = staged;
         self.committed = true;
         eng.persist_wal_frame_if_needed()
@@ -939,6 +1081,9 @@ impl TransactionGuard {
         if eng.in_flight_tx.take().is_none() {
             return Err(StorageError::NoActiveTransaction);
         }
+        if let Some(ref backend) = eng.sqlite_backend {
+            let _ = backend.rollback();
+        }
         self.committed = true;
         Ok(())
     }
@@ -948,7 +1093,11 @@ impl Drop for TransactionGuard {
     fn drop(&mut self) {
         if !self.committed {
             if let Ok(mut eng) = self.pool.inner.try_borrow_mut() {
-                let _ = eng.in_flight_tx.take();
+                if eng.in_flight_tx.take().is_some() {
+                    if let Some(ref backend) = eng.sqlite_backend {
+                        let _ = backend.rollback();
+                    }
+                }
             }
         }
     }

@@ -41,14 +41,18 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         validate_voice_secret_alias(&config.api_key_alias)?;
         let _ = parse_groq_endpoint(&config.endpoint_url)?;
 
+        let mut voice = VoiceInteractionController::new_default(base_avatar_dir);
+        let wake_word_config = OptionalWakeWordConfig::default();
+        voice.set_power_policy(wake_word_config.power_policy);
+
         Ok(Self {
-            voice: VoiceInteractionController::new_default(base_avatar_dir),
+            voice,
             capture_device,
             config,
             secret_store,
             transport,
             ducking: AudioDuckingController::new_default_winmm(),
-            wake_word_config: OptionalWakeWordConfig::default(),
+            wake_word_config,
             session_queue: VoiceSessionOrderQueue::new(),
             network_requests_dispatched: 0,
             total_billed_seconds: 0,
@@ -78,7 +82,7 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
 
     pub fn set_wake_word_power_policy(&mut self, policy: VoicePowerPolicy) {
         self.wake_word_config.power_policy = policy;
-        self.voice.update_power_policy(policy);
+        self.voice.set_power_policy(policy);
     }
 
     pub fn voice(&self) -> &VoiceInteractionController {
@@ -230,7 +234,15 @@ impl<C: PttAudioCaptureStream> PttSttOrchestrator<C> {
         }
 
         self.voice
-            .on_wake_word_detected(confidence, now_ms, avatar)
+            .trigger_wake_word(
+                &self.wake_word_config.phrase,
+                confidence,
+                now_ms,
+                0x1000,
+                0x1000,
+                0x2000,
+                avatar,
+            )
             .map_err(|e| {
                 SttEngineError::UiFailure(redact_sensitive_voice_diagnostic(&e.to_string()))
             })?;

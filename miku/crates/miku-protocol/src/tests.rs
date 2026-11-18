@@ -154,3 +154,33 @@ fn test_protocol_v1_envelope_serialization_and_constant_time_token_auth() {
     assert!(!constant_time_token_eq("miku_tok_v1_99887766", "short"));
     assert!(!constant_time_token_eq("", ""));
 }
+
+#[test]
+fn test_capture_transform_and_base64_encode_contract() {
+    let ct = CaptureTransform::new(100, 200, 1920, 1080, 1.25);
+    assert_eq!(ct.origin_virtual_x, 100);
+    assert_eq!(ct.origin_virtual_y, 200);
+    assert_eq!(ct.width_px, 1920);
+    assert_eq!(ct.height_px, 1080);
+    assert_eq!(ct.dpi_scale, 1.25);
+
+    let (vx, vy) = ct.screen_coords_to_virtual(0.5, 0.5);
+    assert_eq!(vx, 100 + 960);
+    assert_eq!(vy, 200 + 540);
+
+    let (px_vx, px_vy) = ct.pixel_to_virtual(40, 80);
+    assert_eq!(px_vx, 100 + 50);
+    assert_eq!(px_vy, 200 + 100);
+
+    // Serialization and deserialization roundtrip
+    let json = serde_json::to_string(&ct).expect("must serialize CaptureTransform");
+    let decoded: CaptureTransform = serde_json::from_str(&json).expect("must deserialize CaptureTransform");
+    assert_eq!(ct, decoded);
+
+    // Base64 encode tests
+    assert_eq!(base64_encode(b""), "");
+    assert_eq!(base64_encode(b"f"), "Zg==");
+    assert_eq!(base64_encode(b"fo"), "Zm8=");
+    assert_eq!(base64_encode(b"foo"), "Zm9v");
+    assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+}

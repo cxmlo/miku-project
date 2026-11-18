@@ -3,6 +3,9 @@ build/
 dist/
 coverage/
 **/target/
+**/.gradle/
+android/local.properties
+android/app/src/main/jniLibs/
 .antigravity/
 .aistudio/
 .DS_Store

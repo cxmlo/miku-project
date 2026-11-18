@@ -46,6 +46,7 @@ pub(crate) mod win32_native {
     const LWA_ALPHA: Dword = 0x0000_0002;
     const PM_REMOVE: Uint = 0x0001;
     const MONITORINFOF_PRIMARY: Dword = 0x0000_0001;
+    pub const WDA_EXCLUDEFROMCAPTURE: u32 = 0x0000_0011;
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -159,6 +160,7 @@ pub(crate) mod win32_native {
         fn TranslateMessage(lp_msg: *const Msg) -> Bool;
         fn DispatchMessageW(lp_msg: *const Msg) -> Lresult;
         fn DestroyWindow(hwnd: Hwnd) -> Bool;
+        fn SetWindowDisplayAffinity(hwnd: Hwnd, dw_affinity: Dword) -> Bool;
     }
 
     unsafe extern "system" fn island_pill_wndproc(
@@ -305,6 +307,7 @@ pub(crate) mod win32_native {
                 ));
             }
 
+            let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
             let _ = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
             let _ = ShowWindow(hwnd, style_cfg.show_cmd);
 

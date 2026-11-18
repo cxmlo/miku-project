@@ -101,8 +101,15 @@ impl OverviewSceneController {
     ) -> Result<WebViewIpcPayloadV1, UiError> {
         let (resp_env, _rtt_ms) = bridge.handle_inbound_raw_message(source_origin, raw_json)?;
         let _ = bridge.pop_next_outbound_json();
+        let decoded_req: Option<WebViewIpcEnvelopeV1> = serde_json::from_str(raw_json).ok();
+        let active_payload = match &decoded_req {
+            Some(req) if matches!(req.payload, WebViewIpcPayloadV1::UiInteraction { .. }) => {
+                &req.payload
+            }
+            _ => &resp_env.payload,
+        };
 
-        let (next_mood, element_id, raw_label) = match &resp_env.payload {
+        let (next_mood, element_id, raw_label) = match active_payload {
             WebViewIpcPayloadV1::MikuLink(MikuLinkMessageV1::AgentEvent {
                 agent,
                 kind,
@@ -148,6 +155,62 @@ impl OverviewSceneController {
                     "miku-overview-ram-badge",
                     format!("RAM {:.2} MB | RTT {} us", (*ram_private_mb_x100 as f64) / 100.0, rtt_us),
                 )
+            }
+            WebViewIpcPayloadV1::UiInteraction {
+                event, target_id, ..
+            } => {
+                let target = target_id.trim();
+                let (mood, elem, label) = match (event, target) {
+                    (UiInteractionKind::EscapePressed, _) => {
+                        (AvatarMood::Idle, "miku-overview-status", "Island colapsada".to_string())
+                    }
+                    (_, "perm_allow") => (
+                        AvatarMood::Happy,
+                        "miku-overview-status",
+                        "Permiso Allow Once aprobado".to_string(),
+                    ),
+                    (_, "perm_deny") => (
+                        AvatarMood::Annoyed,
+                        "miku-overview-status",
+                        "Permiso denegado por Gatekeeper".to_string(),
+                    ),
+                    (_, "kill_switch") => (
+                        AvatarMood::Alert,
+                        "miku-overview-status",
+                        "KILL SWITCH ACTIVO".to_string(),
+                    ),
+                    (_, "ptt_toggle") => (
+                        AvatarMood::Listening,
+                        "miku-media-ducking",
+                        "Ducking 20%: Listening".to_string(),
+                    ),
+                    (_, t) if t.starts_with("mood:") => {
+                        let m = match &t[5..] {
+                            "listening" => AvatarMood::Listening,
+                            "thinking" => AvatarMood::Thinking,
+                            "working" => AvatarMood::Working,
+                            "talking" => AvatarMood::Talking,
+                            "happy" => AvatarMood::Happy,
+                            "love" => AvatarMood::Love,
+                            "focused" => AvatarMood::Focused,
+                            "sleepy" => AvatarMood::Sleepy,
+                            "wink" => AvatarMood::Wink,
+                            "surprised" => AvatarMood::Surprised,
+                            "annoyed" => AvatarMood::Annoyed,
+                            "sleeping" => AvatarMood::Sleeping,
+                            "error" => AvatarMood::Error,
+                            "alert" => AvatarMood::Alert,
+                            _ => AvatarMood::Idle,
+                        };
+                        (m, "miku-avatar-mood-label", t[5..].to_string())
+                    }
+                    (_, other) => (
+                        AvatarMood::Working,
+                        "miku-overview-status",
+                        format!("UI action: {}", other),
+                    ),
+                };
+                (mood, elem, label)
             }
             WebViewIpcPayloadV1::DomSafeTextRender {
                 element_id,

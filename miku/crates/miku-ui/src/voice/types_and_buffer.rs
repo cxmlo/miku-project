@@ -6,6 +6,90 @@ use crate::prelude::*;
 //     Pill Soundwave Indicator & Cooperative Cancellation (F-05 / F-16 / ADR-001)
 // ============================================================================
 
+/// Voice STT speech-to-text recognition engines (Gate 0 frozen contract).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceSttEngine {
+    #[default]
+    Off,
+    BrowserWebspeech,
+    GroqWhisper,
+    LocalSapi,
+}
+
+impl VoiceSttEngine {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::BrowserWebspeech => "browser_webspeech",
+            Self::GroqWhisper => "groq_whisper",
+            Self::LocalSapi => "local_sapi",
+        }
+    }
+
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "browser_webspeech" | "webspeech" | "browser" => Self::BrowserWebspeech,
+            "groq_whisper" | "groq" | "whisper" => Self::GroqWhisper,
+            "local_sapi" | "sapi" => Self::LocalSapi,
+            _ => Self::Off,
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
+/// Frozen Gate 0 Voice STT Persistent Settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceSttSettings {
+    pub voice_stt_enabled: bool,
+    pub voice_stt_engine: VoiceSttEngine,
+    pub voice_auto_send: bool,
+}
+
+impl Default for VoiceSttSettings {
+    fn default() -> Self {
+        Self {
+            voice_stt_enabled: false,
+            voice_stt_engine: VoiceSttEngine::Off,
+            voice_auto_send: false,
+        }
+    }
+}
+
+/// Frozen Gate 0 WebSocket voice_transcript event payload:
+/// `{"type": "voice_transcript", "text": string, "is_final": boolean, "engine": string}`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceTranscriptEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub text: String,
+    pub is_final: bool,
+    pub engine: String,
+}
+
+impl VoiceTranscriptEvent {
+    pub fn new(text: impl Into<String>, is_final: bool, engine: impl Into<String>) -> Self {
+        Self {
+            event_type: "voice_transcript".to_string(),
+            text: text.into(),
+            is_final,
+            engine: engine.into(),
+        }
+    }
+
+    pub fn to_json_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({
+            "type": "voice_transcript",
+            "text": self.text,
+            "is_final": self.is_final,
+            "engine": self.engine,
+        }))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum VoiceTriggerMode {

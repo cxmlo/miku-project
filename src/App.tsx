@@ -14,6 +14,7 @@ import {
 } from './utils/cockpitLogic';
 import { GateADiscoveryPanel } from './components/GateADiscoveryPanel';
 import { ArchitectureAndContractsPanel } from './components/ArchitectureAndContractsPanel';
+import { WeekOnePlanPanel } from './components/WeekOnePlanPanel';
 import {
   Check,
   Download,
@@ -24,8 +25,7 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  // Vista del árbol de fases: por defecto muestra el árbol inicial vacío por completar (Sección 8),
-  // con opción de previsualizar las fichas propuestas en MIKU_PLAN.md v1.2 (todo en PENDIENTE, 0% verificado)
+  const [activeTab, setActiveTab] = useState<'avances' | 'fases' | 'tecnico'>('avances');
   const [phaseViewMode, setPhaseViewMode] = useState<'empty_initial' | 'draft_v1_2'>(
     'empty_initial'
   );
@@ -118,41 +118,31 @@ export default function App() {
           Miku · Plan Cockpit
         </a>
 
-        {/* Zone 2: 5 concise single-line text navigation links */}
+        {/* Zone 2: 3 clean cockpit tabs */}
         <nav
           aria-label="Navegación principal del Cockpit"
-          className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-400"
+          className="flex items-center gap-2 text-xs font-medium"
         >
-          <a
-            href="#compuerta-a"
-            className="hover:text-slate-100 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
-          >
-            Compuerta A
-          </a>
-          <a
-            href="#fases-y-tests"
-            className="hover:text-slate-100 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
-          >
-            Fases y Tests
-          </a>
-          <a
-            href="#adrs-y-presupuestos"
-            className="hover:text-slate-100 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
-          >
-            ADRs y Presupuestos
-          </a>
-          <a
-            href="#arquitectura"
-            className="hover:text-slate-100 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
-          >
-            Arquitectura y Contratos
-          </a>
-          <a
-            href="#riesgos-y-archivos"
-            className="hover:text-slate-100 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
-          >
-            Riesgos y Archivos
-          </a>
+          {(
+            [
+              { id: 'avances', label: 'Avances y Capturas' },
+              { id: 'fases', label: 'Fases y Tests' },
+              { id: 'tecnico', label: 'Técnico / Contratos' },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-1.5 rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+                activeTab === tab.id
+                  ? 'border-cyan-400/60 bg-cyan-950/40 text-cyan-300'
+                  : 'border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-900'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </nav>
 
         {/* Zone 3: 1 primary action */}
@@ -172,92 +162,57 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-6 py-6 space-y-8">
-        {/* LIVE_PROJECT_STATE & 5-Line Product Confirmation */}
-        <section
-          id="resumen"
-          aria-labelledby="heading-live-state"
-          className="border border-slate-800 bg-slate-900/60 rounded-xl p-6 space-y-5"
-        >
-          <div className="space-y-4 border-b border-slate-800 pb-5">
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400 tabular-nums">
-                <span className="text-cyan-400 font-medium">
-                  LIVE_PROJECT_STATE · {PROJECT_STATE.meta.planVersion}
-                </span>
-                <span aria-hidden="true">·</span>
-                <span>SemVer: {PROJECT_STATE.meta.repoVersion}</span>
-                <span aria-hidden="true">·</span>
-                <span>Actualizado: {PROJECT_STATE.meta.lastUpdated}</span>
-                <span aria-hidden="true">·</span>
-                <span>Paso activo: {PROJECT_STATE.meta.currentStepId}</span>
+      <main className="flex-1 max-w-[1440px] w-full min-w-0 mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {activeTab === 'avances' && (
+          <>
+            <section
+              id="resumen"
+              aria-labelledby="heading-live-state"
+              className="border border-slate-800 bg-slate-900/60 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+            >
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400">
+                  <span className="text-cyan-400 font-medium">
+                    {PROJECT_STATE.meta.planVersion} · v{PROJECT_STATE.meta.repoVersion}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>Actualizado: {PROJECT_STATE.meta.lastUpdated}</span>
+                </div>
+                <h1
+                  id="heading-live-state"
+                  className="text-xl font-bold text-slate-100 tracking-tight"
+                >
+                  {PROJECT_STATE.meta.productName}
+                </h1>
+                <p className="text-xs text-slate-400">{PROJECT_STATE.meta.activeGateTitle}</p>
               </div>
-              <h1
-                id="heading-live-state"
-                className="text-2xl font-bold text-slate-100 tracking-tight"
-              >
-                {PROJECT_STATE.meta.productName} · Panel de Control Arquitectónico
-              </h1>
-              <p className="text-sm text-slate-400 max-w-4xl">
-                Estado actual:{' '}
-                <span className="text-slate-200 font-medium">
-                  {PROJECT_STATE.meta.activeGateTitle}
+              <div className="flex flex-wrap items-center gap-2 text-xs font-mono shrink-0">
+                <span className="px-2.5 py-1 rounded-md border border-cyan-500/40 bg-cyan-950/30 text-cyan-300">
+                  Compuerta {PROJECT_STATE.meta.activeGate}
                 </span>
-                . Ningún micro-paso de producto se codifica antes de superar las Compuertas A, B
-                (Matriz de lenguaje/stack) y C (Plan Maestro con fichas completas).
-              </p>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('fases')}
+                  className="px-2.5 py-1 rounded-md border border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
+                >
+                  Ver Fases y Tests →
+                </button>
+              </div>
+            </section>
 
-            {/* Gate Status Strip (Full-Width 4-Column Row) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full">
-              {PROJECT_STATE.gates.map((gate) => {
-                const isCurrent = gate.status === 'EN_CURSO';
-                return (
-                  <div
-                    key={gate.id}
-                    className={`p-3.5 rounded-lg border text-xs min-w-0 ${
-                      isCurrent
-                        ? 'border-cyan-400/60 bg-cyan-950/25 text-slate-100'
-                        : 'border-slate-800 bg-slate-950/60 text-slate-400'
-                    }`}
-                  >
-                    <div className="font-mono font-semibold flex items-center justify-between gap-2">
-                      <span className="truncate">{gate.name}</span>
-                      <span
-                        className={`shrink-0 ${
-                          isCurrent ? 'text-cyan-300' : 'text-slate-500'
-                        }`}
-                      >
-                        {gate.status}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-[11px] text-slate-400 leading-relaxed">
-                      {gate.subtitle}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+            <WeekOnePlanPanel
+              days={PROJECT_STATE.weekOnePlan}
+              captures={PROJECT_STATE.visualCaptures}
+            />
+          </>
+        )}
 
-          {/* 5-Line Confirmation of Product Understanding */}
-          <div className="space-y-2">
-            <h2 className="text-xs font-semibold text-slate-300">
-              Confirmación de Entendimiento del Producto en 5 Líneas (Protocolo de Arranque §8)
-            </h2>
-            <div className="grid grid-cols-1 gap-1.5 bg-slate-950 border border-slate-800 rounded-lg p-4 text-xs text-slate-300 font-mono leading-relaxed">
-              {PROJECT_STATE.meta.summaryFiveLines.map((line) => (
-                <div key={line}>{line}</div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Interactive Gate A Discovery Questionnaire */}
-        <GateADiscoveryPanel
-          questions={PROJECT_STATE.discoveryQuestions}
-          extraProposals={PROJECT_STATE.extraProposals}
-        />
+        {activeTab === 'fases' && (
+          <>
+            <GateADiscoveryPanel
+              questions={PROJECT_STATE.discoveryQuestions}
+              extraProposals={PROJECT_STATE.extraProposals}
+            />
 
         {/* Sections (a), (b), (c): Phase Timeline, Current Micro-Step Card, and Test Ledger */}
         <div id="fases-y-tests" className="space-y-6">
@@ -282,12 +237,12 @@ export default function App() {
               <div
                 role="group"
                 aria-label="Selector de vista de árbol de fases"
-                className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-lg"
+                className="flex flex-wrap items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-lg max-w-full"
               >
                 <button
                   type="button"
                   onClick={() => setPhaseViewMode('empty_initial')}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors text-left sm:whitespace-nowrap ${
                     phaseViewMode === 'empty_initial'
                       ? 'bg-slate-800 text-cyan-300'
                       : 'text-slate-400 hover:text-slate-200'
@@ -298,7 +253,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setPhaseViewMode('draft_v1_2')}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors text-left sm:whitespace-nowrap ${
                     phaseViewMode === 'draft_v1_2'
                       ? 'bg-slate-800 text-cyan-300'
                       : 'text-slate-400 hover:text-slate-200'
@@ -608,7 +563,11 @@ export default function App() {
             </section>
           </div>
         </div>
+          </>
+        )}
 
+        {activeTab === 'tecnico' && (
+          <>
         {/* Sections (d) & (e): ADRs + Decision Matrix Link & Performance Budgets */}
         <div id="adrs-y-presupuestos" className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Section (d): ADRs & Compuerta B Decision Matrix Preview */}
@@ -740,7 +699,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-3 [overflow-wrap:anywhere]">
                 {PROJECT_STATE.performanceBudgets.map((budget) => {
                   const simulatedOrRealVal =
                     localMeasurements[budget.id] !== undefined
@@ -839,7 +798,7 @@ export default function App() {
         {/* Sections (h), (i) & File Tree */}
         <div id="riesgos-y-archivos" className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Section (i): Open Risks & Plan B + Section (h): Changelog & CR Builder */}
-          <div className="lg:col-span-7 space-y-6">
+          <div className="lg:col-span-7 space-y-6 min-w-0">
             {/* Section (i): Open Risks */}
             <section
               aria-labelledby="heading-risks"
@@ -919,7 +878,7 @@ export default function App() {
                 </h2>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-3 [overflow-wrap:anywhere]">
                 {PROJECT_STATE.changelog.map((entry) => (
                   <div
                     key={entry.version}
@@ -1044,8 +1003,8 @@ export default function App() {
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-between gap-2 p-2.5 rounded bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300">
-                  <span className="truncate">{formattedCrPreview}</span>
+                <div className="flex items-center justify-between gap-2 p-2.5 rounded bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 min-w-0">
+                  <span className="truncate min-w-0 flex-1">{formattedCrPreview}</span>
                   <button
                     type="button"
                     onClick={handleCopyCr}
@@ -1061,10 +1020,10 @@ export default function App() {
           {/* Repo File Tree Panel */}
           <section
             aria-labelledby="heading-file-tree"
-            className="lg:col-span-5 border border-slate-800 bg-slate-900/60 rounded-xl p-6 flex flex-col justify-between space-y-4"
+            className="lg:col-span-5 min-w-0 border border-slate-800 bg-slate-900/60 rounded-xl p-6 flex flex-col justify-between space-y-4"
           >
             <div className="space-y-4">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
                 <div>
                   <div className="text-xs font-mono text-slate-400">
                     Estructura del repositorio y entregas del turno actual
@@ -1120,7 +1079,7 @@ export default function App() {
                             : 'Pendiente'}
                         </span>
                       </div>
-                      <p className="text-slate-400 mt-0.5 leading-relaxed">
+                      <p className="text-slate-400 mt-0.5 leading-relaxed [overflow-wrap:anywhere]">
                         {node.description}
                       </p>
                     </div>
@@ -1136,14 +1095,22 @@ export default function App() {
             </div>
           </section>
         </div>
+          </>
+        )}
       </main>
 
       <footer className="border-t border-slate-900 py-5 px-6 text-xs text-slate-500 max-w-[1440px] w-full mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
         <div>
-          Miku Desktop Orchestrator · Plan Cockpit (Fuente de verdad: MIKU_PLAN v1.2)
+          Miku Desktop Orchestrator · Plan Cockpit ({PROJECT_STATE.meta.lastUpdated})
         </div>
         <div className="font-mono">
-          Compuerta activa: A (Descubrimiento) · Progreso de fases verificado: 0%
+          Compuerta activa: {PROJECT_STATE.meta.activeGate} · Progreso global verificado:{' '}
+          {(() => {
+            const allSteps = activePhases.flatMap((p) => p.steps);
+            const ver = allSteps.filter((s) => s.status === 'VERIFICADO').length;
+            const pct = allSteps.length ? Math.round((ver / allSteps.length) * 100) : 0;
+            return `${ver}/${allSteps.length} (${pct}%)`;
+          })()}
         </div>
       </footer>
     </div>

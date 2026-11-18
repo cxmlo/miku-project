@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+use crate::avatar::physics::validate_single_svg_vector_asset;
 use crate::prelude::*;
 
 impl AvatarPackSnapshot {

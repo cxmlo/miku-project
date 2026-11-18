@@ -355,8 +355,19 @@ impl CanonicalPathJail {
             && normalized.as_bytes()[1] == b':'
         {
             let drv = format!("{}:", (normalized.as_bytes()[0] as char).to_ascii_uppercase());
-            (Some(drv), &normalized[2..])
+            let rest = &normalized[2..];
+            if rest.contains(':') {
+                return Err(JailError::AlternateDataStreamForbidden(
+                    project_root.to_string(),
+                ));
+            }
+            (Some(drv), rest)
         } else if normalized.starts_with('/') {
+            if normalized.contains(':') {
+                return Err(JailError::AlternateDataStreamForbidden(
+                    project_root.to_string(),
+                ));
+            }
             (None, normalized.as_str())
         } else {
             return Err(JailError::InvalidRoot(project_root.to_string()));

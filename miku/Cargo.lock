@@ -62,10 +62,14 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "miku-agent"
 version = "0.1.0"
 dependencies = [
+ "miku-browser",
  "miku-core",
  "miku-gatekeeper",
  "miku-gateway",
+ "miku-memory",
+ "miku-platform",
  "miku-protocol",
+ "miku-storage",
  "serde",
  "serde_json",
  "tokio",
@@ -73,16 +77,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "miku-browser"
+version = "0.1.0"
+dependencies = [
+ "miku-gatekeeper",
+ "miku-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "miku-cli"
 version = "0.1.0"
 dependencies = [
  "miku-agent",
+ "miku-browser",
  "miku-core",
  "miku-gatekeeper",
  "miku-gateway",
+ "miku-mcp",
+ "miku-memory",
  "miku-platform",
  "miku-protocol",
+ "miku-skills",
  "miku-storage",
+ "miku-tunnel",
  "miku-ui",
  "serde",
  "serde_json",
@@ -151,10 +171,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "miku-mobile-core"
+version = "0.1.0"
+dependencies = [
+ "miku-gatekeeper",
+ "miku-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "miku-platform"
 version = "0.1.0"
 dependencies = [
  "miku-core",
+ "miku-gatekeeper",
  "miku-gateway",
  "miku-protocol",
  "serde",
@@ -172,6 +203,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "miku-skills"
+version = "0.1.0"
+dependencies = [
+ "miku-core",
+ "miku-gatekeeper",
+ "miku-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "miku-storage"
 version = "0.1.0"
 dependencies = [
@@ -181,6 +225,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "miku-tunnel"
+version = "0.1.0"
+dependencies = [
+ "miku-gateway",
+ "miku-platform",
+ "miku-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

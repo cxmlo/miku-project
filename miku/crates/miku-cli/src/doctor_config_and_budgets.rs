@@ -147,11 +147,18 @@ pub fn parse_and_validate_miku_toml(
 
     let _gk = GatekeeperEngine::new(profile.clone())
         .map_err(|e| format!("GatekeeperEngine init failed: {}", e))?;
-    let contracts = BaseContractBundle::load_embedded_defaults()
-        .map_err(|e| format!("BaseContractBundle validation failed: {}", e))?;
+    static EMBEDDED_CONTRACT_SHA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let contract_sha256 = if let Some(cached) = EMBEDDED_CONTRACT_SHA.get() {
+        cached.clone()
+    } else {
+        let contracts = BaseContractBundle::load_embedded_defaults()
+            .map_err(|e| format!("BaseContractBundle validation failed: {}", e))?;
+        let _ = EMBEDDED_CONTRACT_SHA.set(contracts.contract_sha256.clone());
+        contracts.contract_sha256
+    };
 
     let toml_sha256 = sha256_hex(raw_toml.trim().as_bytes());
-    Ok((profile, toml_sha256, contracts.contract_sha256))
+    Ok((profile, toml_sha256, contract_sha256))
 }
 
 pub fn probe_miku_toml_and_contracts(raw_toml: &str) -> DiagnosticProbeResult {

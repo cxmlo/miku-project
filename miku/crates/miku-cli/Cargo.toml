@@ -7,6 +7,10 @@ authors.workspace = true
 default-run = "miku-cli"
 
 [[bin]]
+name = "miku"
+path = "src/bin/miku.rs"
+
+[[bin]]
 name = "miku-cli"
 path = "src/main.rs"
 
@@ -20,10 +24,15 @@ miku-core = { path = "../miku-core" }
 miku-gateway = { path = "../miku-gateway" }
 miku-gatekeeper = { path = "../miku-gatekeeper" }
 miku-storage = { path = "../miku-storage" }
+miku-memory = { path = "../miku-memory" }
 miku-agent = { path = "../miku-agent" }
 miku-platform = { path = "../miku-platform" }
+miku-mcp = { path = "../miku-mcp" }
+miku-skills = { path = "../miku-skills" }
+miku-browser = { path = "../miku-browser" }
+miku-tunnel = { path = "../miku-tunnel" }
 miku-ui = { path = "../miku-ui" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
-tokio = { version = "1.40", features = ["rt", "sync", "macros", "time", "net"] }
+tokio = { version = "1.40", features = ["rt", "sync", "macros", "signal", "time", "net"] }

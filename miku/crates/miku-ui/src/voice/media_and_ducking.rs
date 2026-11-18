@@ -111,10 +111,10 @@ impl MediaTransportCommand {
 
 /// Portable backend trait abstracting system multimedia volume ducking and media key transport.
 pub trait SystemAudioMediaBackend: Send {
-    fn read_volume_snapshot(&self) -> Result<SystemAudioSnapshot, VoiceInteractionError>;
-    fn apply_volume_snapshot(&mut self, s: &SystemAudioSnapshot) -> Result<(), VoiceInteractionError>;
-    fn query_current_track(&self) -> Result<Option<MediaTrackMetadata>, VoiceInteractionError>;
-    fn dispatch_media_command(&mut self, cmd: MediaTransportCommand) -> Result<(), VoiceInteractionError>;
+    fn read_volume_snapshot(&self) -> Result<SystemAudioSnapshot, UiError>;
+    fn apply_volume_snapshot(&mut self, s: &SystemAudioSnapshot) -> Result<(), UiError>;
+    fn query_current_track(&self) -> Result<Option<MediaTrackMetadata>, UiError>;
+    fn dispatch_media_command(&mut self, cmd: MediaTransportCommand) -> Result<(), UiError>;
 }
 
 /// Deterministic in-memory backend for unit and integration testing of ducking and media controls.
@@ -154,38 +154,35 @@ impl SimulatedAudioMediaBackend {
 }
 
 impl SystemAudioMediaBackend for SimulatedAudioMediaBackend {
-    fn read_volume_snapshot(&self) -> Result<SystemAudioSnapshot, VoiceInteractionError> {
+    fn read_volume_snapshot(&self) -> Result<SystemAudioSnapshot, UiError> {
         if self.fail_on_read_volume {
-            return Err(VoiceInteractionError::InvalidTransition {
-                from: "AudioVolumeRead".to_string(),
-                attempted: "simulated read_volume_snapshot failure".to_string(),
-            });
+            return Err(UiError::VoiceInteractionError(
+                "simulated read_volume_snapshot failure".to_string(),
+            ));
         }
         Ok(self.current_snapshot)
     }
 
-    fn apply_volume_snapshot(&mut self, s: &SystemAudioSnapshot) -> Result<(), VoiceInteractionError> {
+    fn apply_volume_snapshot(&mut self, s: &SystemAudioSnapshot) -> Result<(), UiError> {
         if self.fail_on_apply_volume {
-            return Err(VoiceInteractionError::InvalidTransition {
-                from: "AudioVolumeApply".to_string(),
-                attempted: "simulated apply_volume_snapshot failure".to_string(),
-            });
+            return Err(UiError::VoiceInteractionError(
+                "simulated apply_volume_snapshot failure".to_string(),
+            ));
         }
         self.current_snapshot = *s;
         self.applied_snapshots.push(*s);
         Ok(())
     }
 
-    fn query_current_track(&self) -> Result<Option<MediaTrackMetadata>, VoiceInteractionError> {
+    fn query_current_track(&self) -> Result<Option<MediaTrackMetadata>, UiError> {
         Ok(self.current_track.clone())
     }
 
-    fn dispatch_media_command(&mut self, cmd: MediaTransportCommand) -> Result<(), VoiceInteractionError> {
+    fn dispatch_media_command(&mut self, cmd: MediaTransportCommand) -> Result<(), UiError> {
         if self.fail_on_media_command {
-            return Err(VoiceInteractionError::InvalidTransition {
-                from: "MediaTransport".to_string(),
-                attempted: "simulated dispatch_media_command failure".to_string(),
-            });
+            return Err(UiError::VoiceInteractionError(
+                "simulated dispatch_media_command failure".to_string(),
+            ));
         }
         if let Some(track) = &mut self.current_track {
             track.apply_transport(cmd);
@@ -272,22 +269,22 @@ impl WinMmSystemAudioMediaBackend {
 }
 
 impl SystemAudioMediaBackend for WinMmSystemAudioMediaBackend {
-    fn read_volume_snapshot(&self) -> Result<SystemAudioSnapshot, VoiceInteractionError> {
+    fn read_volume_snapshot(&self) -> Result<SystemAudioSnapshot, UiError> {
         Ok(Self::query_os_waveout_volume().unwrap_or(self.shadow_snapshot))
     }
 
-    fn apply_volume_snapshot(&mut self, s: &SystemAudioSnapshot) -> Result<(), VoiceInteractionError> {
+    fn apply_volume_snapshot(&mut self, s: &SystemAudioSnapshot) -> Result<(), UiError> {
         let effective_raw = if s.muted { 0 } else { s.raw_waveout_volume_u32 };
         let _ = Self::apply_os_waveout_volume(effective_raw);
         self.shadow_snapshot = *s;
         Ok(())
     }
 
-    fn query_current_track(&self) -> Result<Option<MediaTrackMetadata>, VoiceInteractionError> {
+    fn query_current_track(&self) -> Result<Option<MediaTrackMetadata>, UiError> {
         Ok(self.current_track.clone())
     }
 
-    fn dispatch_media_command(&mut self, cmd: MediaTransportCommand) -> Result<(), VoiceInteractionError> {
+    fn dispatch_media_command(&mut self, cmd: MediaTransportCommand) -> Result<(), UiError> {
         if self.allow_os_media_keys {
             Self::send_os_virtual_media_key(cmd);
         }
@@ -361,11 +358,11 @@ impl AudioDuckingController {
     pub const fn target_duck_level(&self) -> f32 { self.target_duck_level }
     pub const fn duck_transitions_count(&self) -> u64 { self.duck_transitions_count }
     pub const fn restore_transitions_count(&self) -> u64 { self.restore_transitions_count }
-    pub fn current_backend_snapshot(&self) -> Result<SystemAudioSnapshot, VoiceInteractionError> {
+    pub fn current_backend_snapshot(&self) -> Result<SystemAudioSnapshot, UiError> {
         self.backend.read_volume_snapshot()
     }
 
-    pub fn engage_ducking(&mut self, now_ms: u64) -> Result<AudioDuckingReceipt, VoiceInteractionError> {
+    pub fn engage_ducking(&mut self, now_ms: u64) -> Result<AudioDuckingReceipt, UiError> {
         if let AudioDuckingState::Ducked { original, ducked_volume, engaged_at_ms } = self.state {
             return Ok(AudioDuckingReceipt {
                 original_snapshot: original,
@@ -412,7 +409,7 @@ impl AudioDuckingController {
     pub fn restore_original_volume(
         &mut self,
         now_ms: u64,
-    ) -> Result<Option<AudioRestoreReceipt>, VoiceInteractionError> {
+    ) -> Result<Option<AudioRestoreReceipt>, UiError> {
         let (original, ducked_volume, engaged_at_ms) = match self.state {
             AudioDuckingState::Normal => return Ok(None),
             AudioDuckingState::Ducked { original, ducked_volume, engaged_at_ms } => {
@@ -435,20 +432,16 @@ impl AudioDuckingController {
 
     pub fn recover_interrupted_ducking_from_disk(
         &mut self,
-    ) -> Result<Option<SystemAudioSnapshot>, VoiceInteractionError> {
+    ) -> Result<Option<SystemAudioSnapshot>, UiError> {
         let Some(path) = &self.recovery_file_path else { return Ok(None) };
         if !path.exists() {
             return Ok(None);
         }
-        let raw = fs::read_to_string(path).map_err(|e| VoiceInteractionError::InvalidTransition {
-            from: "DuckingCrashRecovery".to_string(),
-            attempted: format!("failed to read recovery journal: {}", e),
+        let raw = fs::read_to_string(path).map_err(|e| {
+            UiError::VoiceInteractionError(format!("failed to read recovery journal: {}", e))
         })?;
         let record: DuckingRecoveryRecord = serde_json::from_str(&raw).map_err(|e| {
-            VoiceInteractionError::InvalidTransition {
-                from: "DuckingCrashRecovery".to_string(),
-                attempted: format!("invalid recovery journal JSON: {}", e),
-            }
+            UiError::VoiceInteractionError(format!("invalid recovery journal JSON: {}", e))
         })?;
         self.backend.apply_volume_snapshot(&record.original_snapshot)?;
         self.state = AudioDuckingState::Normal;
@@ -497,18 +490,22 @@ impl Default for OptionalWakeWordConfig {
     fn default() -> Self {
         Self {
             enabled_by_user: false,
-            power_policy: VoicePowerPolicy::default_laptop_safe(),
-            phrase: "Hey Miku".to_string(),
+            power_policy: VoicePowerPolicy {
+                on_battery_power: true,
+                gaming_mode_active: false,
+                allow_wake_word_on_battery: false,
+            },
+            phrase: DEFAULT_WAKE_WORD_PHRASE.to_string(),
         }
     }
 }
 
 impl OptionalWakeWordConfig {
-    pub const fn is_listening_allowed(&self) -> bool {
-        self.enabled_by_user && self.power_policy.is_wake_word_enabled()
+    pub fn is_listening_allowed(&self) -> bool {
+        self.enabled_by_user && self.power_policy.is_wake_word_permitted()
     }
-    pub const fn active_idle_audio_streams(&self) -> usize {
-        if self.enabled_by_user && self.power_policy.is_wake_word_enabled() { 1 } else { 0 }
+    pub fn active_idle_audio_streams(&self) -> usize {
+        if self.is_listening_allowed() { 1 } else { 0 }
     }
     pub const fn estimated_idle_cpu_pct(&self) -> f64 { 0.0 }
 }
@@ -517,11 +514,12 @@ impl OptionalWakeWordConfig {
 pub struct IslandMediaController {
     backend: Box<dyn SystemAudioMediaBackend>,
     last_rendered_badge: Option<String>,
+    next_ipc_seq: u64,
 }
 
 impl IslandMediaController {
     pub fn new(backend: Box<dyn SystemAudioMediaBackend>) -> Self {
-        Self { backend, last_rendered_badge: None }
+        Self { backend, last_rendered_badge: None, next_ipc_seq: 1 }
     }
 
     pub fn backend(&self) -> &dyn SystemAudioMediaBackend { self.backend.as_ref() }
@@ -530,23 +528,21 @@ impl IslandMediaController {
     pub fn sync_current_track_to_island(
         &mut self,
         bridge: &mut WebView2IpcBridge,
-    ) -> Result<Option<WebViewIpcPayloadV1>, VoiceInteractionError> {
+    ) -> Result<Option<WebViewIpcPayloadV1>, UiError> {
         let Some(track) = self.backend.query_current_track()? else {
             self.last_rendered_badge = None;
             return Ok(None);
         };
         let badge_raw = track.format_island_badge();
-        let payload = sanitize_for_text_content("miku-island-media-track", &badge_raw);
-        let env = WebViewIpcEnvelopeV1::new_event(
-            bridge.origin_token(),
-            "media.track.updated",
+        let payload = sanitize_for_text_content("miku-island-media-track", &badge_raw)?;
+        let env = WebViewIpcEnvelopeV1::new(
+            format!("media-track-{}", self.next_ipc_seq),
+            None,
+            OVERVIEW_VIRTUAL_INDEX_URL,
             payload.clone(),
         );
-        let raw_json = serde_json::to_string(&env)
-            .map_err(|e| VoiceInteractionError::IpcSerializationError(e.to_string()))?;
-        let _ = bridge
-            .receive_from_webview(&raw_json)
-            .map_err(|e| VoiceInteractionError::IpcSerializationError(e.to_string()))?;
+        self.next_ipc_seq = self.next_ipc_seq.saturating_add(1);
+        bridge.enqueue_outbound(env)?;
         self.last_rendered_badge = Some(badge_raw);
         Ok(Some(payload))
     }
@@ -557,7 +553,7 @@ impl IslandMediaController {
         now_ms: u64,
         gatekeeper: &mut GatekeeperEngine,
         bridge: Option<&mut WebView2IpcBridge>,
-    ) -> Result<Option<MediaTrackMetadata>, VoiceInteractionError> {
+    ) -> Result<Option<MediaTrackMetadata>, UiError> {
         let verdict = gatekeeper.evaluate_request(
             "miku-island-media",
             Capability::Input,
@@ -566,10 +562,10 @@ impl IslandMediaController {
             now_ms,
         );
         if !matches!(verdict, GatekeeperVerdict::Allow { .. }) {
-            return Err(VoiceInteractionError::InvalidTransition {
-                from: "IslandMediaTransport".to_string(),
-                attempted: format!("media command '{}' denied by Gatekeeper", command.as_str()),
-            });
+            return Err(UiError::VoiceInteractionError(format!(
+                "media command '{}' denied by Gatekeeper",
+                command.as_str()
+            )));
         }
         self.backend.dispatch_media_command(command)?;
         if let Some(b) = bridge {

@@ -130,6 +130,39 @@ export interface ExtraProposalItem {
   defaultIncluded: boolean;
 }
 
+export interface WeekOneDayPlan {
+  day: number;
+  title: string;
+  hoursTarget: string;
+  status: 'COMPLETADO' | 'SIGUIENTE' | 'PLANIFICADO';
+  focus: string;
+  tasks: {
+    id: string;
+    label: string;
+    done: boolean;
+    detail: string;
+  }[];
+  visualDeliverable: string;
+  verificationGate: string;
+}
+
+export interface VisualCaptureEntry {
+  id: string;
+  title: string;
+  phaseGroup?: string;
+  category:
+    | 'ANTES vs DESPUÉS'
+    | 'ISLA DINÁMICA'
+    | 'AJUSTES & LINK'
+    | 'DESKTOP WIN32'
+    | 'HARNESS'
+    | 'VOZ & AUDIO'
+    | 'COCKPIT';
+  imagePath: string;
+  capturedAt: string;
+  summary: string;
+}
+
 /**
  * Calculates the completion percentage of a phase strictly from VERIFICADO steps.
  * Rule: Prohibido mostrar progreso inventado; el porcentaje se calcula solo con pasos VERIFICADOS.

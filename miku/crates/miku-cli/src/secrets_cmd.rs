@@ -34,13 +34,14 @@ pub trait SecretPrompter {
 #[derive(Debug, Default)]
 pub struct TerminalSecretPrompter;
 
-impl SecretPrompter for TerminalSecretPrompter {
-    fn is_terminal(&self) -> bool {
-        std::io::stdin().is_terminal()
-    }
-
-    fn prompt_secret(&self, prompt_text: &str) -> Result<Zeroizing<Vec<u8>>, String> {
-        if !self.is_terminal() {
+impl TerminalSecretPrompter {
+    /// Core interactive-terminal gate shared cleanly by production TTY detection
+    /// and non-interactive unit tests (avoiding blocking stdin reads in live terminals).
+    pub fn prompt_with_terminal_state(
+        is_tty: bool,
+        prompt_text: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, String> {
+        if !is_tty {
             return Err(
                 "secret set requires an interactive terminal for secure non-echo input; secrets cannot be provided via non-interactive pipes or command arguments"
                     .to_string(),
@@ -55,6 +56,16 @@ impl SecretPrompter for TerminalSecretPrompter {
         {
             read_password_unix(prompt_text)
         }
+    }
+}
+
+impl SecretPrompter for TerminalSecretPrompter {
+    fn is_terminal(&self) -> bool {
+        std::io::stdin().is_terminal()
+    }
+
+    fn prompt_secret(&self, prompt_text: &str) -> Result<Zeroizing<Vec<u8>>, String> {
+        Self::prompt_with_terminal_state(self.is_terminal(), prompt_text)
     }
 }
 
@@ -395,8 +406,23 @@ mod tests {
 
     #[test]
     fn test_cli_secret_set_requires_interactive_terminal_when_non_interactive() {
+        struct NonInteractiveTerminalPrompter;
+        impl SecretPrompter for NonInteractiveTerminalPrompter {
+            fn is_terminal(&self) -> bool {
+                false
+            }
+            fn prompt_secret(&self, prompt_text: &str) -> Result<Zeroizing<Vec<u8>>, String> {
+                TerminalSecretPrompter::prompt_with_terminal_state(self.is_terminal(), prompt_text)
+            }
+        }
+
         let args = to_args(&["miku-cli", "secret", "set", "test-alias", "--provider", "deepseek"]);
-        let res = execute_cli_secret_command(&args);
+        let prompter = NonInteractiveTerminalPrompter;
+        let res = execute_cli_secret_command_with_prompter_and_backend(
+            &args,
+            &prompter,
+            Some(Box::new(EncryptedMemoryBackend::new())),
+        );
         assert!(res.is_err(), "Calling secret set in non-interactive mode must fail safely");
         assert!(res.err().unwrap().to_lowercase().contains("interactive"));
     }

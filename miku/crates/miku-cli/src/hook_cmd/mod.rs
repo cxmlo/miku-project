@@ -9,7 +9,13 @@ use miku_gatekeeper::{
 };
 
 pub mod merge_and_diff;
+pub mod preview_ops;
+pub mod relay;
 pub use merge_and_diff::*;
+pub use preview_ops::{
+    build_hook_gatekeeper_for_root, discover_all_backups_for_settings, preview_miku_hook,
+    seed_empty_settings_if_missing, HookPreviewOutcome, NonInteractiveGuiHookPrompter,
+};
 
 #[cfg(test)]
 mod tests;
@@ -21,6 +27,7 @@ pub const HOOK_OP_BUDGET_MS: f64 = 20.0;
 pub enum HookTargetAgent {
     ClaudeCode,
     Cursor,
+    Antigravity,
 }
 
 impl HookTargetAgent {
@@ -28,6 +35,7 @@ impl HookTargetAgent {
         match self {
             HookTargetAgent::ClaudeCode => "claude-code",
             HookTargetAgent::Cursor => "cursor",
+            HookTargetAgent::Antigravity => "antigravity",
         }
     }
 
@@ -35,8 +43,9 @@ impl HookTargetAgent {
         match raw.trim().to_ascii_lowercase().as_str() {
             "claude-code" | "claude_code" | "claude" => Ok(HookTargetAgent::ClaudeCode),
             "cursor" | "cursor-ide" => Ok(HookTargetAgent::Cursor),
+            "antigravity" | "antigravity-ide" | "agy" => Ok(HookTargetAgent::Antigravity),
             other => Err(HookInstallError::InvalidAgent(format!(
-                "unsupported hook agent '{}'; expected 'claude-code' or 'cursor'",
+                "unsupported hook agent '{}'; expected 'claude-code', 'cursor', or 'antigravity'",
                 other
             ))),
         }
@@ -277,24 +286,7 @@ fn discover_latest_backup_for_settings(
             line: None,
             reason: "cannot determine settings filename".to_string(),
         })?;
-    let prefix = format!("{}.", file_name);
-    let search_dir = settings_path.parent().unwrap_or(authorized_config_root);
-
-    let mut candidates = Vec::new();
-    let entries = fs::read_dir(search_dir).map_err(|e| HookInstallError::InvalidBackup {
-        line: None,
-        reason: format!("failed to scan backup directory: {}", e),
-    })?;
-
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with(&prefix) && name.ends_with(".bak") {
-                candidates.push(p);
-            }
-        }
-    }
-    candidates.sort();
+    let mut candidates = discover_all_backups_for_settings(authorized_config_root, settings_path)?;
     candidates.pop().ok_or_else(|| HookInstallError::InvalidBackup {
         line: None,
         reason: format!("no .bak backup found for '{}'", file_name),
@@ -527,15 +519,25 @@ pub fn execute_cli_hook_command_with_prompter(
     let mut settings_opt: Option<&str> = None;
     let mut config_root_opt: Option<&str> = None;
     let mut backup_opt: Option<&str> = None;
+    let mut relay_event: Option<&str> = None;
     let mut i = 1;
-    while i + 1 < remaining.len() {
+    while i < remaining.len() {
         match remaining[i] {
-            "--agent" => { agent_raw = remaining[i + 1]; i += 2; }
-            "--settings" => { settings_opt = Some(remaining[i + 1]); i += 2; }
-            "--config-root" => { config_root_opt = Some(remaining[i + 1]); i += 2; }
-            "--backup" => { backup_opt = Some(remaining[i + 1]); i += 2; }
+            "--agent" if i + 1 < remaining.len() => { agent_raw = remaining[i + 1]; i += 2; }
+            "--settings" if i + 1 < remaining.len() => { settings_opt = Some(remaining[i + 1]); i += 2; }
+            "--config-root" if i + 1 < remaining.len() => { config_root_opt = Some(remaining[i + 1]); i += 2; }
+            "--backup" if i + 1 < remaining.len() => { backup_opt = Some(remaining[i + 1]); i += 2; }
+            arg if !arg.starts_with("--") && relay_event.is_none() => {
+                relay_event = Some(arg);
+                i += 1;
+            }
             _ => { i += 1; }
         }
+    }
+
+    if subcmd == "relay" {
+        let out = relay::run_hook_relay(agent_raw, relay_event.unwrap_or("PreToolUse"))?;
+        return Ok(Some(out));
     }
 
     let settings_str = settings_opt

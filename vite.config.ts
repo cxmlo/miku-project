@@ -1,11 +1,32 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
+
+function fileSchemeCompatPlugin(): Plugin {
+  return {
+    name: 'miku-file-scheme-compat',
+    apply: 'build',
+    enforce: 'post',
+    transformIndexHtml(html) {
+      return html
+        .replace(/<script\s+type="module"\s+crossorigin\s+src="([^"]+)"\s*><\/script>/gi, '<script defer src="$1"></script>')
+        .replace(/<link\s+rel="stylesheet"\s+crossorigin\s+href="([^"]+)"\s*>/gi, '<link rel="stylesheet" href="$1">');
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    base: './',
+    plugins: [react(), tailwindcss(), fileSchemeCompatPlugin()],
+    build: {
+      rollupOptions: {
+        output: {
+          format: 'iife' as const,
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
